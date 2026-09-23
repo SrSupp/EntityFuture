@@ -1,0 +1,12 @@
+{
+  "domain": "entityfuture",
+  "name": "EntityFuture",
+  "codeowners": ["@SrSupp"],
+  "config_flow": true,
+  "documentation": "https://github.com/SrSupp/EntityFuture",
+  "integration_type": "hub",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/SrSupp/EntityFuture/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

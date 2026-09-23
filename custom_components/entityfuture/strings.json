@@ -1,0 +1,54 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "New EntityFuture predictor",
+        "description": "Which entity should be predicted, and how many minutes into the future?",
+        "data": {
+          "name": "Name",
+          "target_entity": "Target entity",
+          "horizon_minutes": "Prediction horizon (minutes)"
+        }
+      },
+      "target_state": {
+        "title": "Target state",
+        "description": "Current state of {entity_id}: {current_state}. Which state counts as \"yes\"?",
+        "data": {
+          "target_state": "Target state (\"yes\")"
+        }
+      }
+    },
+    "error": {
+      "target_state_required": "Please provide a target state."
+    },
+    "abort": {
+      "already_configured": "A predictor for this entity and horizon already exists."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Configure EntityFuture",
+        "description": "Additional helper entities to learn from, plus sampling and threshold settings.",
+        "data": {
+          "helper_entities": "Helper entities",
+          "sampling_interval_minutes": "Sampling interval (minutes)",
+          "prediction_threshold": "Yes/no threshold (%)",
+          "use_recorder_history": "Use recorder history as warm start"
+        }
+      }
+    },
+    "error": {
+      "target_is_helper": "The target entity cannot also be a helper entity."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "probability": { "name": "Probability" },
+      "accuracy": { "name": "Accuracy" }
+    },
+    "binary_sensor": {
+      "prediction": { "name": "Prediction" }
+    }
+  }
+}

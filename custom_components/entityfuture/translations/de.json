@@ -1,0 +1,54 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Neuer EntityFuture-Prädiktor",
+        "description": "Welche Entität soll vorhergesagt werden, und wie viele Minuten in die Zukunft?",
+        "data": {
+          "name": "Name",
+          "target_entity": "Ziel-Entität",
+          "horizon_minutes": "Vorhersagehorizont (Minuten)"
+        }
+      },
+      "target_state": {
+        "title": "Zielzustand",
+        "description": "Aktueller Zustand von {entity_id}: {current_state}. Welcher Zustand gilt als \"Ja\"?",
+        "data": {
+          "target_state": "Zielzustand (\"Ja\")"
+        }
+      }
+    },
+    "error": {
+      "target_state_required": "Bitte einen Zielzustand angeben."
+    },
+    "abort": {
+      "already_configured": "Für diese Entität und diesen Horizont existiert bereits ein Prädiktor."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "EntityFuture konfigurieren",
+        "description": "Zusätzliche Entitäten, die beim Lernen helfen, sowie Zeitraster und Schwellenwert.",
+        "data": {
+          "helper_entities": "Hilfs-Entitäten",
+          "sampling_interval_minutes": "Abtastintervall (Minuten)",
+          "prediction_threshold": "Schwellenwert für Ja/Nein (%)",
+          "use_recorder_history": "Recorder-Historie als Warmstart nutzen"
+        }
+      }
+    },
+    "error": {
+      "target_is_helper": "Die Ziel-Entität kann nicht gleichzeitig Hilfs-Entität sein."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "probability": { "name": "Wahrscheinlichkeit" },
+      "accuracy": { "name": "Genauigkeit" }
+    },
+    "binary_sensor": {
+      "prediction": { "name": "Vorhersage" }
+    }
+  }
+}

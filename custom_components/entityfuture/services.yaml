@@ -1,0 +1,20 @@
+reset_model:
+  name: Reset model
+  description: >-
+    Wipes the learned model and pending samples for a predictor, and
+    optionally re-runs the recorder history warm start.
+  fields:
+    config_entry_id:
+      name: Predictor
+      description: The EntityFuture predictor (config entry) to reset.
+      required: true
+      selector:
+        config_entry:
+          integration: entityfuture
+    rerun_warmstart:
+      name: Re-run warm start
+      description: Re-import training data from recorder history after resetting.
+      required: false
+      default: false
+      selector:
+        boolean:
