@@ -32,6 +32,12 @@ LAPLACE_ALPHA = 1.0
 HISTORY_IMPORT_LOOKBACK_DAYS = 7
 MIN_SAMPLES_FOR_ACCURACY = 5
 
+# Warm start uses a chronological train/test split so the accuracy sensor
+# already has an honest (held-out, walk-forward) estimate right after setup,
+# instead of only ever reflecting live predictions made from now on.
+WARMSTART_EVAL_FRACTION = 0.2
+MIN_SAMPLES_FOR_WARMSTART_EVAL = 30
+
 # Feature keys used internally by the model
 FEATURE_WEEKDAY = "_weekday"
 FEATURE_TIME_BUCKET = "_time_bucket"

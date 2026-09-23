@@ -121,6 +121,11 @@ class EntityFutureCoordinator:
 
         if not self.warmstart_done and self.use_recorder_history:
             await self._async_try_warmstart()
+            # Persist immediately: without this, a restart before the first
+            # live sample is verified would silently lose the warm-started
+            # model and accuracy backtest (delayed saves only happen from
+            # the snapshot/verify loop).
+            await self._store.async_save(self._data_to_save())
 
         self._unsub_interval = async_track_time_interval(
             self.hass, self._async_take_snapshot, self.sampling_interval
@@ -221,11 +226,13 @@ class EntityFutureCoordinator:
         try:
             from .history_import import async_import_history
 
-            learned = await async_import_history(self.hass, self)
+            learned, evaluated = await async_import_history(self.hass, self)
             _LOGGER.info(
-                "EntityFuture %s: learned %d samples from recorder history",
+                "EntityFuture %s: learned %d samples from recorder history "
+                "(%d held out for an initial accuracy backtest)",
                 self.entry.title,
                 learned,
+                evaluated,
             )
         except Exception:  # noqa: BLE001 - warm start must never break setup
             _LOGGER.exception(
