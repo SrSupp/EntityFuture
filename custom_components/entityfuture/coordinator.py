@@ -200,7 +200,7 @@ class EntityFutureCoordinator:
                 # Best effort: verify against the current state right away
                 # if we're not too far past due, otherwise drop it.
                 if now - due <= self.sampling_interval * 3:
-                    await self._async_verify_sample(sample_id, now)
+                    self._verify_sample(sample_id, now)
                 else:
                     _LOGGER.debug(
                         "Dropping stale pending sample %s (due %s)", sample_id, due
@@ -305,16 +305,15 @@ class EntityFutureCoordinator:
         self._notify()
 
     def _schedule_verification(self, sample_id: str, due: datetime) -> None:
-        unsub = async_track_point_in_time(
-            self.hass,
-            lambda now, sample_id=sample_id: self.hass.async_create_task(
-                self._async_verify_sample(sample_id, now)
-            ),
-            due,
-        )
+        @callback
+        def _verify(now: datetime) -> None:
+            self._verify_sample(sample_id, now)
+
+        unsub = async_track_point_in_time(self.hass, _verify, due)
         self._unsub_pending[sample_id] = unsub
 
-    async def _async_verify_sample(self, sample_id: str, now: datetime) -> None:
+    @callback
+    def _verify_sample(self, sample_id: str, now: datetime) -> None:
         unsub = self._unsub_pending.pop(sample_id, None)
         if unsub is not None:
             unsub()
