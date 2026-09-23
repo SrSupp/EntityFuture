@@ -86,11 +86,16 @@ class EntityFutureConfigFlow(ConfigFlow, domain=DOMAIN):
                 title = self._data.pop(CONF_NAME)
                 return self.async_create_entry(title=title, data=self._data)
 
+        target_state_key = (
+            vol.Required(CONF_TARGET_STATE, default=current_state_value)
+            if current_state_value
+            else vol.Required(CONF_TARGET_STATE)
+        )
         schema = vol.Schema(
             {
-                vol.Required(
-                    CONF_TARGET_STATE, default=current_state_value or ""
-                ): selector.TextSelector(),
+                target_state_key: selector.StateSelector(
+                    selector.StateSelectorConfig(entity_id=target_entity_id)
+                ),
             }
         )
         return self.async_show_form(

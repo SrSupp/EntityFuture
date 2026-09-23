@@ -12,7 +12,7 @@
       },
       "target_state": {
         "title": "Zielzustand",
-        "description": "Aktueller Zustand von {entity_id}: {current_state}. Welcher Zustand gilt als \"Ja\"?",
+        "description": "Aktueller Zustand von {entity_id}: {current_state}. Welcher Zustand gilt als \"Ja\"?\n\nTipp: Nach dem Anlegen kannst du über das Zahnrad-Symbol (\"Konfigurieren\") auf der Geräteseite Hilfs-Entitäten (z. B. Schulferien) hinzufügen und Abtastintervall/Schwellenwert anpassen.",
         "data": {
           "target_state": "Zielzustand (\"Ja\")"
         }

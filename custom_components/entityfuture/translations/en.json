@@ -12,7 +12,7 @@
       },
       "target_state": {
         "title": "Target state",
-        "description": "Current state of {entity_id}: {current_state}. Which state counts as \"yes\"?",
+        "description": "Current state of {entity_id}: {current_state}. Which state counts as \"yes\"?\n\nTip: after creating this predictor, you can add helper entities (e.g. school holidays) and tune sampling via the gear icon (\"Configure\") on its device page.",
         "data": {
           "target_state": "Target state (\"yes\")"
         }
