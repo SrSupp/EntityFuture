@@ -43,6 +43,16 @@ FEATURE_WEEKDAY = "_weekday"
 FEATURE_TIME_BUCKET = "_time_bucket"
 FEATURE_TARGET_CURRENT_STATE = "_target_current_state"
 
+# Suffix appended to an entity's feature key for its companion "did this
+# just change?" feature, e.g. "cover.bedroom_blind__recency". A change
+# within the last sampling interval is "recent", otherwise "stable" - this
+# lets the model weigh a fresh transition differently from a state that
+# has simply been held for a while.
+RECENCY_SUFFIX = "__recency"
+FEATURE_TARGET_RECENCY = FEATURE_TARGET_CURRENT_STATE + RECENCY_SUFFIX
+RECENCY_RECENT = "recent"
+RECENCY_STABLE = "stable"
+
 STATE_UNKNOWN_VALUE = "_unknown_"
 
 STORAGE_VERSION = 1

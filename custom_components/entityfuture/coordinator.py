@@ -42,10 +42,14 @@ from .const import (
     DEFAULT_USE_RECORDER_HISTORY,
     DOMAIN,
     FEATURE_TARGET_CURRENT_STATE,
+    FEATURE_TARGET_RECENCY,
     FEATURE_TIME_BUCKET,
     FEATURE_WEEKDAY,
     LAPLACE_ALPHA,
     MIN_SAMPLES_FOR_ACCURACY,
+    RECENCY_RECENT,
+    RECENCY_STABLE,
+    RECENCY_SUFFIX,
     STATE_UNKNOWN_VALUE,
     STORAGE_VERSION,
     TIME_BUCKET_MINUTES,
@@ -190,24 +194,30 @@ class EntityFutureCoordinator:
 
         now = dt_util.utcnow()
         for sample in data.get("pending_samples", []):
-            due = dt_util.parse_datetime(sample["due"])
-            if due is None:
+            window_end = dt_util.parse_datetime(sample.get("window_end", ""))
+            if window_end is None:
+                _LOGGER.debug(
+                    "Dropping pending sample in an unrecognized format: %s",
+                    sample.get("id"),
+                )
                 continue
             sample_id = sample["id"]
             self.pending_samples[sample_id] = sample
-            if due <= now:
-                # Home Assistant was offline when this sample was due.
-                # Best effort: verify against the current state right away
-                # if we're not too far past due, otherwise drop it.
-                if now - due <= self.sampling_interval * 3:
-                    self._verify_sample(sample_id, now)
+            if window_end <= now:
+                # Home Assistant was offline when this sample's window ended.
+                # Best effort: verify right away if we're not too far past
+                # due, otherwise drop it.
+                if now - window_end <= self.sampling_interval * 3:
+                    await self._async_verify_sample(sample_id, now)
                 else:
                     _LOGGER.debug(
-                        "Dropping stale pending sample %s (due %s)", sample_id, due
+                        "Dropping stale pending sample %s (window_end %s)",
+                        sample_id,
+                        window_end,
                     )
                     self.pending_samples.pop(sample_id, None)
             else:
-                self._schedule_verification(sample_id, due)
+                self._schedule_verification(sample_id, window_end)
 
     def _data_to_save(self) -> dict:
         return {
@@ -250,17 +260,43 @@ class EntityFutureCoordinator:
             return STATE_UNKNOWN_VALUE
         return state.state
 
+    def _feature_pair(self, entity_id: str, now_utc: datetime) -> tuple[str, str]:
+        """Return (current_value, recency) for one entity's feature contribution.
+
+        `recency` is "recent" if the entity's state changed within the last
+        sampling interval, otherwise "stable" - this lets the model learn a
+        fresh transition (e.g. a blind that was *just* opened) differently
+        from a state that has simply been held for a while.
+        """
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return STATE_UNKNOWN_VALUE, STATE_UNKNOWN_VALUE
+        if state.last_changed is None:
+            recency = STATE_UNKNOWN_VALUE
+        else:
+            recency = (
+                RECENCY_RECENT
+                if (now_utc - state.last_changed) <= self.sampling_interval
+                else RECENCY_STABLE
+            )
+        return state.state, recency
+
     def build_features(self, at: datetime | None = None) -> dict[str, str]:
         """Build the feature vector for "now" (or a given local time)."""
         now = at or dt_util.now()
+        now_utc = dt_util.utcnow()
         minute_of_day = now.hour * 60 + now.minute
+        target_value, target_recency = self._feature_pair(self.target_entity, now_utc)
         features: dict[str, str] = {
             FEATURE_WEEKDAY: str(now.weekday()),
             FEATURE_TIME_BUCKET: str(minute_of_day // TIME_BUCKET_MINUTES),
-            FEATURE_TARGET_CURRENT_STATE: self._state_of(self.target_entity),
+            FEATURE_TARGET_CURRENT_STATE: target_value,
+            FEATURE_TARGET_RECENCY: target_recency,
         }
         for entity_id in self.helper_entities:
-            features[entity_id] = self._state_of(entity_id)
+            value, recency = self._feature_pair(entity_id, now_utc)
+            features[entity_id] = value
+            features[f"{entity_id}{RECENCY_SUFFIX}"] = recency
         return features
 
     # -- prediction / accuracy exposed to entities ----------------------------
@@ -293,27 +329,32 @@ class EntityFutureCoordinator:
         predicted = self.model.predict_proba(features)
 
         sample_id = uuid.uuid4().hex
-        due = dt_util.utcnow() + self.horizon
+        now_utc = dt_util.utcnow()
+        window_start = now_utc + self.horizon
+        window_end = window_start + self.sampling_interval
         self.pending_samples[sample_id] = {
             "id": sample_id,
-            "due": due.isoformat(),
+            "window_start": window_start.isoformat(),
+            "window_end": window_end.isoformat(),
             "features": features,
             "predicted_prob": predicted,
         }
-        self._schedule_verification(sample_id, due)
+        self._schedule_verification(sample_id, window_end)
         self._async_persist()
         self._notify()
 
-    def _schedule_verification(self, sample_id: str, due: datetime) -> None:
-        @callback
-        def _verify(now: datetime) -> None:
-            self._verify_sample(sample_id, now)
+    def _schedule_verification(self, sample_id: str, check_time: datetime) -> None:
+        # This must be a coroutine function (not a plain callback or a bare
+        # lambda) so Home Assistant schedules it safely on the event loop
+        # instead of routing it to a worker thread - the recorder lookup
+        # inside _async_verify_sample needs to run from there.
+        async def _verify(now: datetime) -> None:
+            await self._async_verify_sample(sample_id, now)
 
-        unsub = async_track_point_in_time(self.hass, _verify, due)
+        unsub = async_track_point_in_time(self.hass, _verify, check_time)
         self._unsub_pending[sample_id] = unsub
 
-    @callback
-    def _verify_sample(self, sample_id: str, now: datetime) -> None:
+    async def _async_verify_sample(self, sample_id: str, now: datetime) -> None:
         unsub = self._unsub_pending.pop(sample_id, None)
         if unsub is not None:
             unsub()
@@ -322,16 +363,30 @@ class EntityFutureCoordinator:
         if sample is None:
             return
 
-        actual_state = self._state_of(self.target_entity)
-        if actual_state == STATE_UNKNOWN_VALUE:
-            _LOGGER.debug(
-                "Skipping sample %s: target entity unavailable at verification time",
-                sample_id,
-            )
-            self._async_persist()
-            return
+        occurred: bool | None = None
+        window_start = dt_util.parse_datetime(sample.get("window_start", ""))
+        window_end = dt_util.parse_datetime(sample.get("window_end", ""))
+        if window_start is not None and window_end is not None:
+            from .history_import import async_check_target_state_in_window
 
-        label = 1 if actual_state == self.target_state else 0
+            occurred = await async_check_target_state_in_window(
+                self.hass, self.target_entity, window_start, window_end, self.target_state
+            )
+
+        if occurred is None:
+            # Recorder unavailable (or no data yet) - fall back to an
+            # instantaneous check instead of losing the sample entirely.
+            actual_state = self._state_of(self.target_entity)
+            if actual_state == STATE_UNKNOWN_VALUE:
+                _LOGGER.debug(
+                    "Skipping sample %s: target entity unavailable at verification time",
+                    sample_id,
+                )
+                self._async_persist()
+                return
+            occurred = actual_state == self.target_state
+
+        label = 1 if occurred else 0
 
         predicted_prob = sample.get("predicted_prob")
         if predicted_prob is not None:

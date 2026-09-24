@@ -43,6 +43,24 @@ def test_unseen_feature_value_is_neutral_ish() -> None:
     assert abs(baseline - with_new_feature) < 0.05
 
 
+def test_unseen_feature_is_exactly_neutral_even_with_imbalanced_classes() -> None:
+    # Regression test: with a skewed base rate (very common for e.g. a
+    # motion sensor that is "off" far more often than "on"), a brand-new,
+    # never-learned feature must not silently push the prediction toward
+    # one class just because the classes are imbalanced.
+    model = NaiveBayesModel()
+    for _ in range(45):
+        model.learn_one({"weekday": "mon"}, 0)
+    for _ in range(5):
+        model.learn_one({"weekday": "mon"}, 1)
+
+    baseline = model.predict_proba({"weekday": "mon"})
+    with_new_helper = model.predict_proba({"weekday": "mon", "new_helper": "on"})
+
+    assert baseline is not None and with_new_helper is not None
+    assert baseline == with_new_helper
+
+
 def test_serialization_round_trip_preserves_predictions() -> None:
     model = NaiveBayesModel(alpha=1.0)
     for i in range(30):

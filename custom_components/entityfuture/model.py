@@ -60,8 +60,15 @@ class NaiveBayesModel:
         )
 
         for name, raw_value in features.items():
+            if name not in self.feature_domains:
+                # We have never learned this feature at all (e.g. a helper
+                # entity that was just added). Zero observations means zero
+                # information - it must not shift the odds either way, even
+                # if the two classes are imbalanced overall.
+                continue
+
             value = str(raw_value)
-            domain_size = len(self.feature_domains.get(name, ())) or 1
+            domain_size = len(self.feature_domains[name]) or 1
             counts = self.feature_counts.get(name, {}).get(
                 value, {_NEGATIVE: 0, _POSITIVE: 0}
             )
