@@ -14,10 +14,19 @@ CONF_HELPER_ENTITIES = "helper_entities"
 CONF_SAMPLING_INTERVAL_MINUTES = "sampling_interval_minutes"
 CONF_PREDICTION_THRESHOLD = "prediction_threshold"
 CONF_USE_RECORDER_HISTORY = "use_recorder_history"
+CONF_INCLUDE_TARGET_STATE_FEATURE = "include_target_state_feature"
 
 DEFAULT_SAMPLING_INTERVAL_MINUTES = 5
 DEFAULT_PREDICTION_THRESHOLD = 50
 DEFAULT_USE_RECORDER_HISTORY = True
+# The target's own current state (and whether it just changed) is often the
+# single strongest predictor of its near-future state - but for a predictor
+# meant to *anticipate* an event from other, earlier signals (e.g. a blind
+# opening elsewhere in the house before motion starts), that dominant signal
+# can drown out the weaker leading indicators entirely. Default stays True
+# for backward compatibility / the "will this still be on" use case, but
+# anticipatory use cases should turn it off.
+DEFAULT_INCLUDE_TARGET_STATE_FEATURE = True
 
 MIN_HORIZON_MINUTES = 1
 MAX_HORIZON_MINUTES = 24 * 60

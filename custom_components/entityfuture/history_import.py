@@ -178,6 +178,7 @@ async def async_import_history(
 
     def _build_pairs() -> list[tuple[dict[str, str], int]]:
         target_state_value = coordinator.target_state
+        include_target_feature = coordinator.include_target_state_feature
         pairs: list[tuple[dict[str, str], int]] = []
         current = start_time
         while current + horizon + sampling_interval <= end_time:
@@ -189,11 +190,14 @@ async def async_import_history(
             features = {
                 FEATURE_WEEKDAY: str(local_now.weekday()),
                 FEATURE_TIME_BUCKET: str(minute_of_day // TIME_BUCKET_MINUTES),
-                FEATURE_TARGET_CURRENT_STATE: (
-                    _state_at(target_states, current) or STATE_UNKNOWN_VALUE
-                ),
-                FEATURE_TARGET_RECENCY: _recency_at(target_states, current, sampling_interval),
             }
+            if include_target_feature:
+                features[FEATURE_TARGET_CURRENT_STATE] = (
+                    _state_at(target_states, current) or STATE_UNKNOWN_VALUE
+                )
+                features[FEATURE_TARGET_RECENCY] = _recency_at(
+                    target_states, current, sampling_interval
+                )
             for entity_id, states in helper_states.items():
                 features[entity_id] = _state_at(states, current) or STATE_UNKNOWN_VALUE
                 features[f"{entity_id}{RECENCY_SUFFIX}"] = _recency_at(

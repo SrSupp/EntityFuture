@@ -34,7 +34,11 @@
           "helper_entities": "Hilfs-Entitäten",
           "sampling_interval_minutes": "Abtastintervall (Minuten)",
           "prediction_threshold": "Schwellenwert für Ja/Nein (%)",
-          "use_recorder_history": "Recorder-Historie als Warmstart nutzen"
+          "use_recorder_history": "Recorder-Historie als Warmstart nutzen",
+          "include_target_state_feature": "Aktuellen Zustand der Ziel-Entität als Merkmal einbeziehen"
+        },
+        "data_description": {
+          "include_target_state_feature": "Für einen vorausschauenden Prädiktor (z. B. \"gleich Bewegung im Bad\" anhand eines Rolladens im Schlafzimmer) diese Option AUSSCHALTEN - der aktuelle Zustand der Ziel-Entität selbst ist meist so ein starker Prädiktor, dass er schwächere, aber früher auftretende Signale deiner Hilfs-Entitäten überdeckt. Für einen \"bleibt das so\"-Prädiktor (z. B. ein Schalter bleibt an) ANGESCHALTET lassen."
         }
       }
     },

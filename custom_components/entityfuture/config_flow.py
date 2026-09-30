@@ -12,11 +12,13 @@ from homeassistant.helpers import selector
 from .const import (
     CONF_HELPER_ENTITIES,
     CONF_HORIZON_MINUTES,
+    CONF_INCLUDE_TARGET_STATE_FEATURE,
     CONF_PREDICTION_THRESHOLD,
     CONF_SAMPLING_INTERVAL_MINUTES,
     CONF_TARGET_ENTITY,
     CONF_TARGET_STATE,
     CONF_USE_RECORDER_HISTORY,
+    DEFAULT_INCLUDE_TARGET_STATE_FEATURE,
     DEFAULT_PREDICTION_THRESHOLD,
     DEFAULT_SAMPLING_INTERVAL_MINUTES,
     DEFAULT_USE_RECORDER_HISTORY,
@@ -167,6 +169,13 @@ class EntityFutureOptionsFlow(OptionsFlow):
                     CONF_USE_RECORDER_HISTORY,
                     default=options.get(
                         CONF_USE_RECORDER_HISTORY, DEFAULT_USE_RECORDER_HISTORY
+                    ),
+                ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_INCLUDE_TARGET_STATE_FEATURE,
+                    default=options.get(
+                        CONF_INCLUDE_TARGET_STATE_FEATURE,
+                        DEFAULT_INCLUDE_TARGET_STATE_FEATURE,
                     ),
                 ): selector.BooleanSelector(),
             }

@@ -32,11 +32,13 @@ from .const import (
     ACCURACY_WINDOW_SIZE,
     CONF_HELPER_ENTITIES,
     CONF_HORIZON_MINUTES,
+    CONF_INCLUDE_TARGET_STATE_FEATURE,
     CONF_PREDICTION_THRESHOLD,
     CONF_SAMPLING_INTERVAL_MINUTES,
     CONF_TARGET_ENTITY,
     CONF_TARGET_STATE,
     CONF_USE_RECORDER_HISTORY,
+    DEFAULT_INCLUDE_TARGET_STATE_FEATURE,
     DEFAULT_PREDICTION_THRESHOLD,
     DEFAULT_SAMPLING_INTERVAL_MINUTES,
     DEFAULT_USE_RECORDER_HISTORY,
@@ -115,6 +117,12 @@ class EntityFutureCoordinator:
     def use_recorder_history(self) -> bool:
         return self.entry.options.get(
             CONF_USE_RECORDER_HISTORY, DEFAULT_USE_RECORDER_HISTORY
+        )
+
+    @property
+    def include_target_state_feature(self) -> bool:
+        return self.entry.options.get(
+            CONF_INCLUDE_TARGET_STATE_FEATURE, DEFAULT_INCLUDE_TARGET_STATE_FEATURE
         )
 
     # -- lifecycle ---------------------------------------------------------
@@ -286,13 +294,14 @@ class EntityFutureCoordinator:
         now = at or dt_util.now()
         now_utc = dt_util.utcnow()
         minute_of_day = now.hour * 60 + now.minute
-        target_value, target_recency = self._feature_pair(self.target_entity, now_utc)
         features: dict[str, str] = {
             FEATURE_WEEKDAY: str(now.weekday()),
             FEATURE_TIME_BUCKET: str(minute_of_day // TIME_BUCKET_MINUTES),
-            FEATURE_TARGET_CURRENT_STATE: target_value,
-            FEATURE_TARGET_RECENCY: target_recency,
         }
+        if self.include_target_state_feature:
+            target_value, target_recency = self._feature_pair(self.target_entity, now_utc)
+            features[FEATURE_TARGET_CURRENT_STATE] = target_value
+            features[FEATURE_TARGET_RECENCY] = target_recency
         for entity_id in self.helper_entities:
             value, recency = self._feature_pair(entity_id, now_utc)
             features[entity_id] = value
