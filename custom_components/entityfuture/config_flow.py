@@ -13,18 +13,25 @@ from .const import (
     CONF_HELPER_ENTITIES,
     CONF_HORIZON_MINUTES,
     CONF_INCLUDE_TARGET_STATE_FEATURE,
+    CONF_LABEL_MODE,
     CONF_PREDICTION_THRESHOLD,
     CONF_SAMPLING_INTERVAL_MINUTES,
     CONF_TARGET_ENTITY,
+    CONF_TARGET_HOLD_MINUTES,
     CONF_TARGET_STATE,
     CONF_USE_RECORDER_HISTORY,
     DEFAULT_INCLUDE_TARGET_STATE_FEATURE,
+    DEFAULT_LABEL_MODE,
     DEFAULT_PREDICTION_THRESHOLD,
     DEFAULT_SAMPLING_INTERVAL_MINUTES,
+    DEFAULT_TARGET_HOLD_MINUTES,
     DEFAULT_USE_RECORDER_HISTORY,
     DOMAIN,
+    LABEL_MODE_EXACT,
+    LABEL_MODE_WITHIN,
     MAX_HORIZON_MINUTES,
     MAX_SAMPLING_INTERVAL_MINUTES,
+    MAX_TARGET_HOLD_MINUTES,
     MIN_HORIZON_MINUTES,
     MIN_SAMPLING_INTERVAL_MINUTES,
 )
@@ -178,6 +185,29 @@ class EntityFutureOptionsFlow(OptionsFlow):
                         DEFAULT_INCLUDE_TARGET_STATE_FEATURE,
                     ),
                 ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_LABEL_MODE,
+                    default=options.get(CONF_LABEL_MODE, DEFAULT_LABEL_MODE),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[LABEL_MODE_WITHIN, LABEL_MODE_EXACT],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                        translation_key="label_mode",
+                    )
+                ),
+                vol.Optional(
+                    CONF_TARGET_HOLD_MINUTES,
+                    default=options.get(
+                        CONF_TARGET_HOLD_MINUTES, DEFAULT_TARGET_HOLD_MINUTES
+                    ),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=0,
+                        max=MAX_TARGET_HOLD_MINUTES,
+                        mode=selector.NumberSelectorMode.BOX,
+                        unit_of_measurement="min",
+                    )
+                ),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema, errors=errors)

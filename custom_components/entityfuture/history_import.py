@@ -1,4 +1,8 @@
-"""Recorder-backed helpers: warm start, and window-based label checks.
+"""Recorder-backed helpers: warm start, live window checks, and the backtest.
+
+The actual feature/label/evaluation logic lives in features.py and
+backtest.py (no Home Assistant imports); this module only talks to the
+recorder and hands the data over.
 
 Warm start is best-effort. If the recorder is disabled, has no data yet,
 or anything goes wrong, the caller (coordinator) simply continues without
@@ -8,25 +12,22 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant, State
 import homeassistant.util.dt as dt_util
 
+from .backtest import build_samples, evaluate, walk_forward
 from .const import (
-    FEATURE_TARGET_CURRENT_STATE,
-    FEATURE_TARGET_RECENCY,
-    FEATURE_TIME_BUCKET,
-    FEATURE_WEEKDAY,
+    BACKTEST_BURN_IN_FRACTION,
     HISTORY_IMPORT_LOOKBACK_DAYS,
+    LAPLACE_ALPHA,
+    MIN_SAMPLES_FOR_BACKTEST,
     MIN_SAMPLES_FOR_WARMSTART_EVAL,
-    RECENCY_RECENT,
-    RECENCY_STABLE,
-    RECENCY_SUFFIX,
-    STATE_UNKNOWN_VALUE,
-    TIME_BUCKET_MINUTES,
+    SESSION_GAP_MINUTES,
     WARMSTART_EVAL_FRACTION,
 )
+from .features import any_state_active_in_window, find_session_starts
 
 if TYPE_CHECKING:
     from .coordinator import EntityFutureCoordinator
@@ -34,43 +35,27 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
-def _state_object_at(states: list[State], at: datetime) -> State | None:
-    """Return the State object active at time `at`, or None if unknown."""
-    result: State | None = None
-    for state in states:
-        if state.last_changed > at:
-            break
-        result = state
-    return result
+async def _async_fetch_states(
+    hass: HomeAssistant, entity_ids: list[str], start: datetime, end: datetime
+) -> tuple[Any, dict[str, list[State]]]:
+    """Fetch state history from the recorder; returns (recorder_instance, states)."""
+    from homeassistant.components.recorder import get_instance
+    from homeassistant.components.recorder.history import get_significant_states
 
+    recorder_instance = get_instance(hass)
 
-def _state_at(states: list[State], at: datetime) -> str | None:
-    """Return the entity's state value active at time `at`, or None."""
-    state = _state_object_at(states, at)
-    return state.state if state else None
+    def _fetch() -> dict[str, list[State]]:
+        return get_significant_states(
+            hass,
+            start,
+            end,
+            entity_ids,
+            include_start_time_state=True,
+            significant_changes_only=False,
+            no_attributes=True,
+        )
 
-
-def _recency_at(states: list[State], at: datetime, window: timedelta) -> str:
-    """Return "recent" if the state active at `at` started within `window`."""
-    state = _state_object_at(states, at)
-    if state is None or state.last_changed is None:
-        return STATE_UNKNOWN_VALUE
-    return RECENCY_RECENT if (at - state.last_changed) <= window else RECENCY_STABLE
-
-
-def _any_state_active_in_window(
-    states: list[State], start: datetime, end: datetime, target_value: str
-) -> bool:
-    """Return whether `target_value` was active at any point in [start, end)."""
-    for index, state in enumerate(states):
-        if state.last_changed >= end:
-            break
-        if state.state != target_value:
-            continue
-        interval_end = states[index + 1].last_changed if index + 1 < len(states) else None
-        if interval_end is None or interval_end > start:
-            return True
-    return False
+    return recorder_instance, await recorder_instance.async_add_executor_job(_fetch)
 
 
 async def async_check_target_state_in_window(
@@ -79,32 +64,22 @@ async def async_check_target_state_in_window(
     window_start: datetime,
     window_end: datetime,
     target_value: str,
+    hold: timedelta = timedelta(0),
 ) -> bool | None:
     """Check via the recorder whether `entity_id` held `target_value` at any
-    point during [window_start, window_end).
+    point during [window_start, window_end), counting `hold` after each
+    active stretch.
 
     Returns None if this could not be determined (recorder disabled, query
     failed, or no history at all for the entity) - the caller should then
     fall back to an instantaneous state check.
     """
-    from homeassistant.components.recorder import get_instance
-    from homeassistant.components.recorder.history import get_significant_states
-
     try:
-        recorder_instance = get_instance(hass)
-
-        def _fetch() -> dict[str, list[State]]:
-            return get_significant_states(
-                hass,
-                window_start,
-                window_end,
-                [entity_id],
-                include_start_time_state=True,
-                significant_changes_only=False,
-                no_attributes=True,
-            )
-
-        states_by_entity = await recorder_instance.async_add_executor_job(_fetch)
+        # Look back by `hold` so an active stretch that ended just before the
+        # window still counts.
+        _, states_by_entity = await _async_fetch_states(
+            hass, [entity_id], window_start - hold, window_end
+        )
     except Exception:  # noqa: BLE001 - this must never break live verification
         _LOGGER.debug(
             "EntityFuture: recorder window check failed for %s", entity_id, exc_info=True
@@ -115,29 +90,25 @@ async def async_check_target_state_in_window(
     if not states:
         return None
 
-    return _any_state_active_in_window(states, window_start, window_end, target_value)
+    return any_state_active_in_window(states, window_start, window_end, target_value, hold)
 
 
 async def async_import_history(
     hass: HomeAssistant, coordinator: EntityFutureCoordinator
 ) -> tuple[int, int]:
-    """Reconstruct (features, label) training pairs from recorder history.
+    """Warm start: replay recorder history into the coordinator's model.
 
-    A pair's label reflects whether the target state occurred at any point
-    during the sampling-interval-wide window starting at `t + horizon`
-    (not just a single instant), matching how live verification works.
+    A sample's label follows the coordinator's label mode and hold time, so
+    it means exactly what a live verification would mean.
 
-    Uses a chronological train/test split: the earliest pairs are learned
+    Uses a chronological train/test split: the earliest samples are learned
     directly, and the most recent slice is evaluated walk-forward style
-    (predict, then learn) so the accuracy counter already has an honest,
-    held-out estimate right after setup instead of staying empty until
-    live predictions start coming in.
+    (predict, then learn) and recorded in the coordinator's evaluation
+    window, so the quality metrics already have an honest, held-out estimate
+    right after setup.
 
-    Returns (total_pairs_learned, pairs_used_for_the_accuracy_backtest).
+    Returns (total_samples_learned, samples_used_for_the_backtest_slice).
     """
-    from homeassistant.components.recorder import get_instance
-    from homeassistant.components.recorder.history import get_significant_states
-
     horizon = coordinator.horizon
     sampling_interval = coordinator.sampling_interval
     if horizon <= timedelta(0) or sampling_interval <= timedelta(0):
@@ -147,20 +118,9 @@ async def async_import_history(
     end_time = dt_util.utcnow()
     start_time = end_time - timedelta(days=HISTORY_IMPORT_LOOKBACK_DAYS)
 
-    recorder_instance = get_instance(hass)
-
-    def _fetch() -> dict[str, list[State]]:
-        return get_significant_states(
-            hass,
-            start_time,
-            end_time,
-            entity_ids,
-            include_start_time_state=True,
-            significant_changes_only=False,
-            no_attributes=True,
-        )
-
-    states_by_entity = await recorder_instance.async_add_executor_job(_fetch)
+    recorder_instance, states_by_entity = await _async_fetch_states(
+        hass, entity_ids, start_time, end_time
+    )
 
     target_states = states_by_entity.get(coordinator.target_entity)
     if not target_states:
@@ -176,43 +136,21 @@ async def async_import_history(
         for entity_id in coordinator.helper_entities
     }
 
-    def _build_pairs() -> list[tuple[dict[str, str], int]]:
-        target_state_value = coordinator.target_state
-        include_target_feature = coordinator.include_target_state_feature
-        pairs: list[tuple[dict[str, str], int]] = []
-        current = start_time
-        while current + horizon + sampling_interval <= end_time:
-            window_start = current + horizon
-            window_end = window_start + sampling_interval
-
-            local_now = dt_util.as_local(current)
-            minute_of_day = local_now.hour * 60 + local_now.minute
-            features = {
-                FEATURE_WEEKDAY: str(local_now.weekday()),
-                FEATURE_TIME_BUCKET: str(minute_of_day // TIME_BUCKET_MINUTES),
-            }
-            if include_target_feature:
-                features[FEATURE_TARGET_CURRENT_STATE] = (
-                    _state_at(target_states, current) or STATE_UNKNOWN_VALUE
-                )
-                features[FEATURE_TARGET_RECENCY] = _recency_at(
-                    target_states, current, sampling_interval
-                )
-            for entity_id, states in helper_states.items():
-                features[entity_id] = _state_at(states, current) or STATE_UNKNOWN_VALUE
-                features[f"{entity_id}{RECENCY_SUFFIX}"] = _recency_at(
-                    states, current, sampling_interval
-                )
-
-            label = 1 if _any_state_active_in_window(
-                target_states, window_start, window_end, target_state_value
-            ) else 0
-            pairs.append((features, label))
-            current += sampling_interval
-        return pairs
-
-    def _learn(pairs: list[tuple[dict[str, str], int]]) -> tuple[int, int]:
-        total = len(pairs)
+    def _work() -> tuple[int, int]:
+        samples = build_samples(
+            target_states=target_states,
+            helper_states=helper_states,
+            target_state=coordinator.target_state,
+            horizon=horizon,
+            sampling_interval=sampling_interval,
+            label_mode=coordinator.label_mode,
+            hold=coordinator.hold,
+            include_target=coordinator.include_target_state_feature,
+            start=start_time,
+            end=end_time,
+            to_local=dt_util.as_local,
+        )
+        total = len(samples)
         if total == 0:
             return 0, 0
 
@@ -221,17 +159,107 @@ async def async_import_history(
             eval_count = min(int(total * WARMSTART_EVAL_FRACTION), total // 2)
         train_only_count = total - eval_count
 
-        for features, label in pairs[:train_only_count]:
-            coordinator.model.learn_one(features, label)
+        for sample in samples[:train_only_count]:
+            coordinator.model.learn_one(sample.features, sample.label)
 
-        for features, label in pairs[train_only_count:]:
-            predicted = coordinator.model.predict_proba(features)
+        for sample in samples[train_only_count:]:
+            predicted = coordinator.model.predict_proba(sample.features)
             if predicted is not None:
-                predicted_label = 1 if predicted >= 0.5 else 0
-                coordinator.accuracy_window.append(1 if predicted_label == label else 0)
-            coordinator.model.learn_one(features, label)
+                coordinator.eval_window.append((predicted, sample.label))
+            coordinator.model.learn_one(sample.features, sample.label)
 
         return total, eval_count
 
-    pairs = await recorder_instance.async_add_executor_job(_build_pairs)
-    return await recorder_instance.async_add_executor_job(_learn, pairs)
+    return await recorder_instance.async_add_executor_job(_work)
+
+
+async def async_run_backtest(
+    hass: HomeAssistant,
+    coordinator: EntityFutureCoordinator,
+    *,
+    days: int,
+    label_mode: str,
+    hold_minutes: int,
+    include_target: bool,
+    helper_entities: list[str],
+    threshold_pct: int,
+) -> dict[str, Any]:
+    """Replay up to `days` of history and report how good the predictions would have been.
+
+    Every parameter can differ from the live configuration, so alternative
+    setups (other helper entities, label mode, ...) can be compared without
+    touching the running predictor or waiting days for live data.
+    """
+    horizon = coordinator.horizon
+    sampling_interval = coordinator.sampling_interval
+    hold = timedelta(minutes=hold_minutes)
+    end_time = dt_util.utcnow()
+    start_time = end_time - timedelta(days=days)
+
+    parameters = {
+        "days": days,
+        "label_mode": label_mode,
+        "hold_minutes": hold_minutes,
+        "include_target_state_feature": include_target,
+        "helper_entities": helper_entities,
+        "threshold_pct": threshold_pct,
+        "horizon_minutes": int(horizon.total_seconds() // 60),
+        "sampling_interval_minutes": int(sampling_interval.total_seconds() // 60),
+    }
+
+    recorder_instance, states_by_entity = await _async_fetch_states(
+        hass, [coordinator.target_entity, *helper_entities], start_time, end_time
+    )
+    target_states = states_by_entity.get(coordinator.target_entity)
+    if not target_states:
+        return {"parameters": parameters, "error": "no recorder history for the target entity"}
+
+    helper_states = {
+        entity_id: states_by_entity.get(entity_id, []) for entity_id in helper_entities
+    }
+
+    def _work() -> dict[str, Any]:
+        samples = build_samples(
+            target_states=target_states,
+            helper_states=helper_states,
+            target_state=coordinator.target_state,
+            horizon=horizon,
+            sampling_interval=sampling_interval,
+            label_mode=label_mode,
+            hold=hold,
+            include_target=include_target,
+            start=start_time,
+            end=end_time,
+            to_local=dt_util.as_local,
+        )
+        if len(samples) < MIN_SAMPLES_FOR_BACKTEST:
+            return {
+                "error": f"not enough history ({len(samples)} samples, need {MIN_SAMPLES_FOR_BACKTEST})"
+            }
+
+        rows = walk_forward(
+            samples, alpha=LAPLACE_ALPHA, burn_in_fraction=BACKTEST_BURN_IN_FRACTION
+        )
+        if not rows:
+            return {"error": "no samples left after the burn-in period"}
+
+        sessions = [
+            moment
+            for moment in find_session_starts(
+                target_states,
+                coordinator.target_state,
+                hold,
+                timedelta(minutes=SESSION_GAP_MINUTES),
+            )
+            if moment >= rows[0].t
+        ]
+        return evaluate(
+            rows,
+            threshold=threshold_pct / 100,
+            sessions=sessions,
+            horizon=horizon,
+            sampling_interval=sampling_interval,
+        )
+
+    result = await recorder_instance.async_add_executor_job(_work)
+    return {"parameters": parameters, **result}

@@ -1,6 +1,6 @@
 # EntityFuture
 
-A [HACS](https://hacs.xyz/) integration for [Home Assistant](https://www.home-assistant.io/) that predicts whether an entity will be in a given state **X minutes from now** — using a deliberately simple, self-learning model (Naive Bayes) that runs directly inside Home Assistant, with no external dependencies (no NumPy, no scikit-learn, no cloud).
+A [HACS](https://hacs.xyz/) integration for [Home Assistant](https://www.home-assistant.io/) that estimates whether an entity will be in a given state **within the next X minutes** — using a deliberately simple, self-learning model (Naive Bayes) that runs directly inside Home Assistant, with no external dependencies (no NumPy, no scikit-learn, no cloud).
 
 ## Disclaimer
 
@@ -10,38 +10,53 @@ This project was built together with [Claude](https://claude.com/claude-code) (A
 
 You create a "predictor":
 
-- **Target entity** – e.g. `binary_sensor.bathroom_humidity`, `person.sven`, `switch.heating`
+- **Target entity** – e.g. `binary_sensor.bathroom_motion`, `person.sven`, `switch.heating`
 - **Target state** – which state counts as "yes", e.g. `on` or `home`
-- **Horizon** – how many minutes into the future to predict, e.g. 30
+- **Horizon** – how many minutes ahead to look, e.g. 15
 
-Optionally you add **helper entities** that help the model learn (e.g. `binary_sensor.school_holiday`, `person.partner`, `sensor.weather_condition`, `input_boolean.home_office`) — these contribute as features but are never themselves predicted.
+Optionally you add **helper entities** that help the model learn (e.g. `binary_sensor.school_holiday`, `person.partner`, `cover.bedroom_blind`, `binary_sensor.front_door`) — these contribute as features but are never themselves predicted.
 
-This creates a device with three entities:
+This creates a device with these entities:
 
 | Entity | Description |
 |---|---|
-| `sensor.<name>_probability` | Probability (0–100%) that the target entity will be in its target state in *X* minutes |
+| `sensor.<name>_probability` | Probability (0–100%) that the target will be in its target state (see "What counts as yes" below) |
 | `binary_sensor.<name>_prediction` | Yes/no, based on a configurable threshold (default 50%) |
-| `sensor.<name>_accuracy` | Rolling hit-rate of past predictions (diagnostic entity) |
+| `sensor.<name>_accuracy` | Rolling accuracy at your threshold. Attributes show `baseline_accuracy` — what a predictor that *always* says the more common answer would score — plus precision, recall and the share of time it says "yes". **Compare accuracy to the baseline, not to 100%.** |
+| `sensor.<name>_auc` | Discrimination (ROC AUC) of the verified predictions. 0.5 = coin flip, 1.0 = perfect. Unlike accuracy it isn't inflated by a rare "yes". |
+
+## What counts as "yes"? (Options → "What counts as yes")
+
+- **Within the horizon** *(default)*: yes if the target state occurs **at any point in the next X minutes**. This is usually the right question for something like pre-heating: "will this room be used soon?"
+- **Exactly at the horizon**: yes only if it occurs in the short window (one sampling interval wide) X minutes from now. A much sparser, noisier event for pulse-like sensors such as a PIR motion sensor.
+
+**Hold time** treats the target as still active for N minutes after its last active moment, so short sensor pulses (a PIR that reports "on" for ~1 minute) merge into one session instead of looking like unrelated blips.
+
+Changing either rebuilds the model (the learned counts would otherwise answer a different question), then re-runs the recorder warm start.
 
 ## How does the model work?
 
 **Naive Bayes**, hand-implemented, with no ML library at all:
 
-- Features used: day of week, time of day (30-minute buckets), optionally the target entity's own current state (see below), and the current state of every configured helper entity. Each of those entity-state features also has a companion "recency" feature ("recent" if it changed within the last sampling interval, otherwise "stable") — so the model can learn that a *fresh* transition (e.g. a blind that was just opened) is a different, often stronger signal than a state that has simply been held for a while.
+- Features: day of week, time of day (30-minute buckets), optionally the target entity's own current state (see below), and the current state of every configured helper entity. Each entity-state feature also has a companion "recency" feature ("recent" if it changed within the last sampling interval, otherwise "stable").
 - Every few minutes (sampling interval, default 5 min), the integration takes a snapshot of these features and remembers: "check back later to see what became of the target entity".
-- The label isn't a single instantaneous check — it's whether the target state occurred *at any point* during the sampling-interval-wide window starting at `t + horizon` (a brief peak counts as "yes" for that whole window, e.g. a motion sensor that flicks on and back off). This means the actual learning delay is `horizon + sampling_interval`, not just `horizon` — the window has to fully elapse before it can be checked. The check itself is a lightweight, single-entity [Recorder](https://www.home-assistant.io/integrations/recorder/) query (falls back to an instantaneous state check if the recorder is unavailable).
-- Once that window has passed, the actual outcome is compared against the earlier prediction — this is how **accuracy** is computed, honestly, without any test-data trickery ("predict then verify") — and the feature vector together with the observed outcome is learned into the model.
-- Only counters per feature value and class are kept — memory usage grows with the number of distinct observed values, not with time. Lightweight enough for a Raspberry Pi. A feature that has never been observed at all (e.g. a helper entity you just added) contributes exactly nothing to the prediction until it has real data — it can't silently skew the result just because the two outcome classes happen to be imbalanced.
-- During setup, existing recorder history (last 7 days by default) can optionally be used to "warm-start" the model instead of starting from zero.
+- Once the "yes" window of that snapshot has fully passed, the outcome is looked up (a lightweight single-entity [Recorder](https://www.home-assistant.io/integrations/recorder/) query; instantaneous check as a fallback), compared against the earlier prediction, and then learned. Predicting *before* learning is what keeps the quality metrics honest.
+- Only counters per feature value and class are kept — memory grows with the number of distinct observed values, not with time. A feature that has never been observed at all (e.g. a helper entity you just added) contributes exactly nothing until it has real data.
+- During setup, existing recorder history (last 7 days) can optionally "warm-start" the model. The most recent ~20% is replayed walk-forward (predict, then learn) to fill the quality metrics with an honest, held-out estimate right away.
 
-**Accuracy after a warm start:** testing the model against data it was just trained on would make accuracy look artificially good, so the warm start uses a chronological train/test split instead. The earliest ~80% of the reconstructed history is learned directly; the most recent ~20% (at least 30 total pairs must exist for this to kick in) is replayed walk-forward — predict first using only what the model knew at that point in time, *then* learn from it — exactly like a live prediction, just faster. That gives `sensor.<name>_accuracy` an honest, held-out estimate right after setup instead of staying unknown. If there isn't enough history for a meaningful split, everything is just learned directly and the accuracy sensor stays unknown until live predictions start coming in.
+**Adding helper entities later:** a newly added helper starts with zero observations, so it has no effect until it accumulates live data. To backfill it immediately, call `entityfuture.reset_model` with `rerun_warmstart: true`.
 
-**Adding helper entities later:** a newly added helper entity starts with zero observations, so (per the neutral-until-observed rule above) it has no effect on predictions until it accumulates some live data. To backfill it immediately from history instead of waiting, call the `entityfuture.reset_model` service with `rerun_warmstart: true`.
+**Anticipatory predictors vs. "will this still be true" predictors:** the target's own current state is usually by far the strongest predictor of its own near future. That suits "will this switch still be on", but works *against* an anticipatory predictor, because Naive Bayes just sums every feature's evidence and that one self-referential signal drowns out weaker leading indicators. For anticipation, turn off **"Include the target's own current state as a feature"** in Options.
 
-**Anticipatory predictors vs. "will this still be true" predictors:** the target entity's own current state is, in most real-world cases, by far the single strongest predictor of its own near-future state — which is exactly what you want for a "will this switch still be on in 15 minutes" predictor, but works *against* you for an anticipatory one, e.g. "will there be motion in the bathroom soon, based on a bedroom blind opening first". Naive Bayes has no concept of feature importance — every feature's evidence is just summed — so that one dominant, self-referential signal can drown out much weaker (but exactly what you're after) leading indicators from your helper entities. If your predictions only seem to react *after* the target state has already changed instead of ahead of it, turn off **"Include the target's own current state as a feature"** in Options, then reset the model (`entityfuture.reset_model`, `rerun_warmstart: true`) so it's forced to rely on day/time and your helper entities instead.
+## Is it any good? Use the backtest
 
-The model and all pending (not-yet-verified) predictions are persisted and survive a Home Assistant restart.
+Don't wait days to find out. The `entityfuture.backtest` service replays your recorder history through the model — predict first, then learn, exactly like live — and reports:
+
+- ROC AUC of your setup, of a **time-of-day-only** model (what do the helpers actually add?), and of "just use whether it is active right now"
+- the positive rate and the **always-"no" baseline accuracy**
+- a **by-threshold table**: share of time the predictor would say "yes" (≈ how long a heater would run), precision, recall, lift, and how many **session starts were flagged early enough** (at least one sampling interval, up to the horizon, ahead)
+
+Every setting can be overridden per run (label mode, hold time, helper entities, include-target-state, threshold, days), so you can compare candidate leading signals without touching the live predictor. The result is returned as the service response (Developer Tools → Actions shows it), written to the log, and shown on the AUC sensor's `last_backtest` attribute.
 
 ## Installation
 
@@ -60,17 +75,20 @@ Copy `custom_components/entityfuture` into your `config/custom_components/` dire
 1. Settings → Devices & Services → Add Integration → *EntityFuture*
 2. Provide a name, the target entity, and the horizon (minutes)
 3. Confirm/adjust the target state (pre-filled with the entity's current state, shown as a dropdown of its known states)
-4. Afterwards, use *Configure* on the device at any time to add helper entities, and adjust the sampling interval, threshold, and recorder warm start
+4. Afterwards, use *Configure* on the device at any time to add helper entities and adjust sampling interval, threshold, label mode, hold time and warm start
 
-## Service `entityfuture.reset_model`
+## Services
 
-Wipes a predictor's learned model (e.g. after adding new helper entities, if you want to start learning "from scratch") and can optionally re-run the recorder warm start.
+- `entityfuture.reset_model` — wipes a predictor's learned model and can optionally re-run the recorder warm start.
+- `entityfuture.backtest` — see above.
 
-## Limitations (deliberate, for v1)
+## Limitations
 
 - Only discrete states as a target (no "temperature > 22°C" threshold on numeric sensors)
 - One predictor = one target entity + one horizon; create multiple predictors for multiple horizons
-- Naive Bayes assumes features are conditionally independent — for tightly correlated helper entities this can slightly skew the probability, but in practice it's a good, very cheap trade-off for this use case
+- Weekday and time of day are separate features. With only a week or two of history each weekday has very few examples, which can hold probabilities down even for very regular routines.
+- Naive Bayes assumes features are conditionally independent — tightly correlated features (e.g. a helper's state and its "recency") are partly double-counted, so probabilities tend to be overconfident. Use the backtest's precision/lift rather than the raw percentage.
+- A prediction can only be as good as its signals. If nothing in your house reliably happens a while *before* the target, no model can foresee it 15 minutes ahead — the backtest will tell you.
 
 ## Development
 
@@ -79,4 +97,4 @@ pip install pytest
 pytest tests/
 ```
 
-`tests/test_model.py` checks the core Naive Bayes model logic independently of Home Assistant. The rest of the integration (config flow, coordinator, recorder import) should additionally be tested against a real Home Assistant instance.
+The model, features, metrics and backtest logic have no Home Assistant imports and are unit tested directly. The rest (config flow, coordinator, recorder access) should be tested against a real Home Assistant instance.

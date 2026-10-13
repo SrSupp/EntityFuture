@@ -18,3 +18,78 @@ reset_model:
       default: false
       selector:
         boolean:
+
+backtest:
+  name: Backtest
+  description: >-
+    Replays recorder history through the model (predict first, then learn,
+    like live operation) and reports how good the predictions would have
+    been: ROC AUC, precision/recall, the share of time the predictor would
+    say "yes", and how many session starts were flagged early enough. Every
+    option can differ from the live setup, so alternatives (other helper
+    entities, label mode, hold time) can be compared without waiting days.
+    The result is the service response, and is also shown on the AUC
+    sensor's attributes and written to the log.
+  fields:
+    config_entry_id:
+      name: Predictor
+      description: The EntityFuture predictor (config entry) to evaluate.
+      required: true
+      selector:
+        config_entry:
+          integration: entityfuture
+    days:
+      name: Days of history
+      description: How far back to replay (limited by your recorder retention).
+      required: false
+      default: 7
+      selector:
+        number:
+          min: 1
+          max: 30
+          mode: box
+    label_mode:
+      name: Label mode
+      description: >-
+        "within": yes if the target state occurs any time in the next
+        horizon. "exact": yes if it occurs in the sampling window at exactly
+        the horizon.
+      required: false
+      selector:
+        select:
+          options:
+            - within
+            - exact
+    hold_minutes:
+      name: Hold time
+      description: Treat the target as still active this many minutes after its last active moment.
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 60
+          mode: box
+          unit_of_measurement: min
+    include_target_state_feature:
+      name: Include target's own state
+      description: Use the target's own current state as a feature.
+      required: false
+      selector:
+        boolean:
+    helper_entities:
+      name: Helper entities
+      description: Replace the helper entities for this run, to test other candidate signals.
+      required: false
+      selector:
+        entity:
+          multiple: true
+    threshold:
+      name: Yes/no threshold
+      description: Probability (%) at which the predictor says "yes". Defaults to the configured threshold.
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 99
+          mode: box
+          unit_of_measurement: "%"

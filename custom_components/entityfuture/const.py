@@ -15,6 +15,21 @@ CONF_SAMPLING_INTERVAL_MINUTES = "sampling_interval_minutes"
 CONF_PREDICTION_THRESHOLD = "prediction_threshold"
 CONF_USE_RECORDER_HISTORY = "use_recorder_history"
 CONF_INCLUDE_TARGET_STATE_FEATURE = "include_target_state_feature"
+CONF_LABEL_MODE = "label_mode"
+CONF_TARGET_HOLD_MINUTES = "target_hold_minutes"
+
+# What "yes" means for a prediction made at time T:
+#   within: the target state occurs at any point in [T, T + horizon)
+#   exact:  the target state occurs at any point in [T + horizon, T + horizon + sampling interval)
+LABEL_MODE_WITHIN = "within"
+LABEL_MODE_EXACT = "exact"
+DEFAULT_LABEL_MODE = LABEL_MODE_WITHIN
+
+# Treat the target as still "active" this long after its last active moment,
+# so short sensor pulses (e.g. a PIR that holds for ~1 minute) merge into one
+# session instead of looking like unrelated blips.
+DEFAULT_TARGET_HOLD_MINUTES = 0
+MAX_TARGET_HOLD_MINUTES = 60
 
 DEFAULT_SAMPLING_INTERVAL_MINUTES = 5
 DEFAULT_PREDICTION_THRESHOLD = 50
@@ -36,10 +51,17 @@ MAX_SAMPLING_INTERVAL_MINUTES = 60
 
 # Internal model tuning (not exposed in the UI to keep it simple)
 TIME_BUCKET_MINUTES = 30
-ACCURACY_WINDOW_SIZE = 200
+ACCURACY_WINDOW_SIZE = 500
 LAPLACE_ALPHA = 1.0
 HISTORY_IMPORT_LOOKBACK_DAYS = 7
 MIN_SAMPLES_FOR_ACCURACY = 5
+MIN_SAMPLES_FOR_AUC = 20
+
+# Backtest (entityfuture.backtest service)
+BACKTEST_BURN_IN_FRACTION = 0.3
+MIN_SAMPLES_FOR_BACKTEST = 50
+BACKTEST_THRESHOLDS = (5, 10, 15, 20, 30, 40, 50)
+SESSION_GAP_MINUTES = 30
 
 # Warm start uses a chronological train/test split so the accuracy sensor
 # already has an honest (held-out, walk-forward) estimate right after setup,
@@ -67,4 +89,5 @@ STATE_UNKNOWN_VALUE = "_unknown_"
 STORAGE_VERSION = 1
 
 SERVICE_RESET_MODEL = "reset_model"
+SERVICE_BACKTEST = "backtest"
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"

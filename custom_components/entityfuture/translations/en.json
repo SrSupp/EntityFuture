@@ -35,9 +35,13 @@
           "sampling_interval_minutes": "Sampling interval (minutes)",
           "prediction_threshold": "Yes/no threshold (%)",
           "use_recorder_history": "Use recorder history as warm start",
-          "include_target_state_feature": "Include the target's own current state as a feature"
+          "include_target_state_feature": "Include the target's own current state as a feature",
+          "label_mode": "What counts as \"yes\"",
+          "target_hold_minutes": "Hold time (minutes)"
         },
         "data_description": {
+          "label_mode": "\"Within the horizon\": yes if the target state occurs at any time in the next X minutes - usually the right question for e.g. pre-heating. \"Exactly at the horizon\": yes only if it occurs in the short window X minutes from now. Changing this rebuilds the model.",
+          "target_hold_minutes": "Treat the target as still active this long after its last active moment, so short sensor pulses (e.g. a PIR that holds for a minute) merge into one session. 0 = off. Changing this rebuilds the model.",
           "include_target_state_feature": "Turn this OFF for an anticipatory predictor (e.g. \"will there be motion in the bathroom soon\" based on a bedroom blind opening) - the target's own current state is usually such a strong predictor of its near future that it can drown out weaker, earlier signals from your helper entities. Keep it ON for a \"will this still be true\" predictor (e.g. a switch staying on)."
         }
       }
@@ -46,10 +50,19 @@
       "target_is_helper": "The target entity cannot also be a helper entity."
     }
   },
+  "selector": {
+    "label_mode": {
+      "options": {
+        "within": "Within the horizon (any time in the next X minutes)",
+        "exact": "Exactly at the horizon (short window X minutes from now)"
+      }
+    }
+  },
   "entity": {
     "sensor": {
       "probability": { "name": "Probability" },
-      "accuracy": { "name": "Accuracy" }
+      "accuracy": { "name": "Accuracy" },
+      "auc": { "name": "Discrimination (AUC)" }
     },
     "binary_sensor": {
       "prediction": { "name": "Prediction" }
