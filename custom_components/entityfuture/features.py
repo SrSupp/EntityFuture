@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from .const import (
+    DEFAULT_TIME_MODE,
+    FEATURE_DAYTYPE_TIME,
     FEATURE_TARGET_CURRENT_STATE,
     FEATURE_TARGET_RECENCY,
     FEATURE_TIME_BUCKET,
@@ -20,6 +22,9 @@ from .const import (
     RECENCY_SUFFIX,
     STATE_UNKNOWN_VALUE,
     TIME_BUCKET_MINUTES,
+    TIME_MODE_DAYTYPE,
+    TIME_MODE_DAYTYPE_AND_TIME,
+    TIME_MODE_TIME_ONLY,
 )
 
 _UNAVAILABLE_STATES = ("unavailable", "unknown")
@@ -57,21 +62,31 @@ def feature_pair(state: Any | None, now: datetime, window: timedelta) -> tuple[s
     return state.state, recency
 
 
-def time_features(local_now: datetime) -> dict[str, str]:
-    minute_of_day = local_now.hour * 60 + local_now.minute
-    return {
-        FEATURE_WEEKDAY: str(local_now.weekday()),
-        FEATURE_TIME_BUCKET: str(minute_of_day // TIME_BUCKET_MINUTES),
-    }
+def day_type(local_now: datetime) -> str:
+    return "weekend" if local_now.weekday() >= 5 else "workday"
+
+
+def time_features(local_now: datetime, mode: str = DEFAULT_TIME_MODE) -> dict[str, str]:
+    """Return the clock features for the given time mode (see const.TIME_MODES)."""
+    bucket = str((local_now.hour * 60 + local_now.minute) // TIME_BUCKET_MINUTES)
+    daytype_time = f"{day_type(local_now)}_{bucket}"
+    if mode == TIME_MODE_TIME_ONLY:
+        return {FEATURE_TIME_BUCKET: bucket}
+    if mode == TIME_MODE_DAYTYPE:
+        return {FEATURE_DAYTYPE_TIME: daytype_time}
+    if mode == TIME_MODE_DAYTYPE_AND_TIME:
+        return {FEATURE_DAYTYPE_TIME: daytype_time, FEATURE_TIME_BUCKET: bucket}
+    return {FEATURE_WEEKDAY: str(local_now.weekday()), FEATURE_TIME_BUCKET: bucket}
 
 
 def make_features(
     local_now: datetime,
     target_pair: tuple[str, str] | None,
     helper_pairs: dict[str, tuple[str, str]],
+    time_mode: str = DEFAULT_TIME_MODE,
 ) -> dict[str, str]:
     """Build the model's feature dict. `target_pair=None` omits the target's own state."""
-    features = time_features(local_now)
+    features = time_features(local_now, time_mode)
     if target_pair is not None:
         features[FEATURE_TARGET_CURRENT_STATE], features[FEATURE_TARGET_RECENCY] = target_pair
     for entity_id, (value, recency) in helper_pairs.items():
@@ -112,6 +127,34 @@ def any_state_active_in_window(
         if interval_end is None or interval_end + hold > start:
             return True
     return False
+
+
+def is_idle(
+    states: list[Any],
+    at: datetime,
+    target_value: str,
+    hold: timedelta,
+    gap: timedelta,
+) -> bool:
+    """Whether the target had no active moment in the `gap` before `at` (history)."""
+    return not any_state_active_in_window(
+        states, at - gap, at + timedelta(seconds=1), target_value, hold
+    )
+
+
+def is_idle_now(
+    state: Any | None, now: datetime, target_value: str, hold: timedelta, gap: timedelta
+) -> bool:
+    """Live equivalent of `is_idle`, from the target's current state object.
+
+    Idle means: not active right now, and it stopped being active at least
+    `gap` + `hold` ago. An unavailable/unknown state is never counted as idle.
+    """
+    if state is None or state.state in _UNAVAILABLE_STATES or state.last_changed is None:
+        return False
+    if state.state == target_value:
+        return False
+    return (now - state.last_changed) >= gap + hold
 
 
 def find_session_starts(

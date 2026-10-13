@@ -37,12 +37,14 @@
           "use_recorder_history": "Use recorder history as warm start",
           "include_target_state_feature": "Include the target's own current state as a feature",
           "label_mode": "What counts as \"yes\"",
-          "target_hold_minutes": "Hold time (minutes)"
+          "target_hold_minutes": "Hold time (minutes)",
+          "time_mode": "Time model"
         },
         "data_description": {
           "label_mode": "\"Within the horizon\": yes if the target state occurs at any time in the next X minutes - usually the right question for e.g. pre-heating. \"Exactly at the horizon\": yes only if it occurs in the short window X minutes from now. Changing this rebuilds the model.",
           "target_hold_minutes": "Treat the target as still active this long after its last active moment, so short sensor pulses (e.g. a PIR that holds for a minute) merge into one session. 0 = off. Changing this rebuilds the model.",
-          "include_target_state_feature": "Turn this OFF for an anticipatory predictor (e.g. \"will there be motion in the bathroom soon\" based on a bedroom blind opening) - the target's own current state is usually such a strong predictor of its near future that it can drown out weaker, earlier signals from your helper entities. Keep it ON for a \"will this still be true\" predictor (e.g. a switch staying on)."
+          "include_target_state_feature": "Turn this OFF for an anticipatory predictor (e.g. \"will there be motion in the bathroom soon\" based on a bedroom blind opening) - the target's own current state is usually such a strong predictor of its near future that it can drown out weaker, earlier signals from your helper entities. Keep it ON for a \"will this still be true\" predictor (e.g. a switch staying on).",
+          "time_mode": "How the clock enters the model. With only a week or two of history, \"workday/weekend\" learns a routine much faster than seven separate weekdays, because each weekday has so few examples. Changing this rebuilds the model."
         }
       }
     },
@@ -56,16 +58,35 @@
         "within": "Within the horizon (any time in the next X minutes)",
         "exact": "Exactly at the horizon (short window X minutes from now)"
       }
+    },
+    "time_mode": {
+      "options": {
+        "weekday": "Weekday + time of day (separate)",
+        "daytype": "Workday/weekend x time of day (joint)",
+        "daytype_and_time": "Workday/weekend x time of day, plus time of day",
+        "time_only": "Time of day only"
+      }
     }
   },
   "entity": {
     "sensor": {
-      "probability": { "name": "Probability" },
-      "accuracy": { "name": "Accuracy" },
-      "auc": { "name": "Discrimination (AUC)" }
+      "probability": {
+        "name": "Probability"
+      },
+      "accuracy": {
+        "name": "Accuracy"
+      },
+      "auc": {
+        "name": "Discrimination (AUC)"
+      },
+      "auc_idle": {
+        "name": "Discrimination when idle (AUC)"
+      }
     },
     "binary_sensor": {
-      "prediction": { "name": "Prediction" }
+      "prediction": {
+        "name": "Prediction"
+      }
     }
   }
 }

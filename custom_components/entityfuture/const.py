@@ -17,6 +17,26 @@ CONF_USE_RECORDER_HISTORY = "use_recorder_history"
 CONF_INCLUDE_TARGET_STATE_FEATURE = "include_target_state_feature"
 CONF_LABEL_MODE = "label_mode"
 CONF_TARGET_HOLD_MINUTES = "target_hold_minutes"
+CONF_TIME_MODE = "time_mode"
+
+# How the clock enters the model:
+#   weekday:          day of week and time-of-day bucket as two separate features
+#   daytype:          workday/weekend x time-of-day bucket as ONE joint feature
+#   daytype_and_time: that joint feature plus the plain time-of-day bucket
+#   time_only:        time-of-day bucket only (no day information)
+# With only a week or two of history each weekday has very few examples, so
+# the coarser day types usually learn a routine much faster.
+TIME_MODE_WEEKDAY = "weekday"
+TIME_MODE_DAYTYPE = "daytype"
+TIME_MODE_DAYTYPE_AND_TIME = "daytype_and_time"
+TIME_MODE_TIME_ONLY = "time_only"
+TIME_MODES = (
+    TIME_MODE_WEEKDAY,
+    TIME_MODE_DAYTYPE,
+    TIME_MODE_DAYTYPE_AND_TIME,
+    TIME_MODE_TIME_ONLY,
+)
+DEFAULT_TIME_MODE = TIME_MODE_WEEKDAY
 
 # What "yes" means for a prediction made at time T:
 #   within: the target state occurs at any point in [T, T + horizon)
@@ -51,11 +71,12 @@ MAX_SAMPLING_INTERVAL_MINUTES = 60
 
 # Internal model tuning (not exposed in the UI to keep it simple)
 TIME_BUCKET_MINUTES = 30
-ACCURACY_WINDOW_SIZE = 500
+ACCURACY_WINDOW_SIZE = 1000
 LAPLACE_ALPHA = 1.0
 HISTORY_IMPORT_LOOKBACK_DAYS = 7
 MIN_SAMPLES_FOR_ACCURACY = 5
 MIN_SAMPLES_FOR_AUC = 20
+MIN_SAMPLES_FOR_IDLE_AUC = 30
 
 # Backtest (entityfuture.backtest service)
 BACKTEST_BURN_IN_FRACTION = 0.3
@@ -72,6 +93,7 @@ MIN_SAMPLES_FOR_WARMSTART_EVAL = 30
 # Feature keys used internally by the model
 FEATURE_WEEKDAY = "_weekday"
 FEATURE_TIME_BUCKET = "_time_bucket"
+FEATURE_DAYTYPE_TIME = "_daytype_time"
 FEATURE_TARGET_CURRENT_STATE = "_target_current_state"
 
 # Suffix appended to an entity's feature key for its companion "did this

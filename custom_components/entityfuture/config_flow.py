@@ -19,12 +19,14 @@ from .const import (
     CONF_TARGET_ENTITY,
     CONF_TARGET_HOLD_MINUTES,
     CONF_TARGET_STATE,
+    CONF_TIME_MODE,
     CONF_USE_RECORDER_HISTORY,
     DEFAULT_INCLUDE_TARGET_STATE_FEATURE,
     DEFAULT_LABEL_MODE,
     DEFAULT_PREDICTION_THRESHOLD,
     DEFAULT_SAMPLING_INTERVAL_MINUTES,
     DEFAULT_TARGET_HOLD_MINUTES,
+    DEFAULT_TIME_MODE,
     DEFAULT_USE_RECORDER_HISTORY,
     DOMAIN,
     LABEL_MODE_EXACT,
@@ -34,6 +36,7 @@ from .const import (
     MAX_TARGET_HOLD_MINUTES,
     MIN_HORIZON_MINUTES,
     MIN_SAMPLING_INTERVAL_MINUTES,
+    TIME_MODES,
 )
 
 CONF_NAME = "name"
@@ -193,6 +196,16 @@ class EntityFutureOptionsFlow(OptionsFlow):
                         options=[LABEL_MODE_WITHIN, LABEL_MODE_EXACT],
                         mode=selector.SelectSelectorMode.DROPDOWN,
                         translation_key="label_mode",
+                    )
+                ),
+                vol.Optional(
+                    CONF_TIME_MODE,
+                    default=options.get(CONF_TIME_MODE, DEFAULT_TIME_MODE),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=list(TIME_MODES),
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                        translation_key="time_mode",
                     )
                 ),
                 vol.Optional(

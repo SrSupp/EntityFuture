@@ -41,21 +41,25 @@ from .const import (
     CONF_TARGET_ENTITY,
     CONF_TARGET_HOLD_MINUTES,
     CONF_TARGET_STATE,
+    CONF_TIME_MODE,
     CONF_USE_RECORDER_HISTORY,
     DEFAULT_INCLUDE_TARGET_STATE_FEATURE,
     DEFAULT_LABEL_MODE,
     DEFAULT_PREDICTION_THRESHOLD,
     DEFAULT_SAMPLING_INTERVAL_MINUTES,
     DEFAULT_TARGET_HOLD_MINUTES,
+    DEFAULT_TIME_MODE,
     DEFAULT_USE_RECORDER_HISTORY,
     DOMAIN,
     HISTORY_IMPORT_LOOKBACK_DAYS,
     LAPLACE_ALPHA,
     MIN_SAMPLES_FOR_ACCURACY,
+    MIN_SAMPLES_FOR_IDLE_AUC,
+    SESSION_GAP_MINUTES,
     STATE_UNKNOWN_VALUE,
     STORAGE_VERSION,
 )
-from .features import feature_pair, label_window, make_features
+from .features import feature_pair, is_idle_now, label_window, make_features
 from .metrics import summarize
 from .model import NaiveBayesModel
 
@@ -74,8 +78,10 @@ class EntityFutureCoordinator:
         self.hass = hass
         self.entry = entry
         self.model = NaiveBayesModel(alpha=LAPLACE_ALPHA)
-        # Rolling (predicted probability, actual 0/1) pairs of verified predictions.
-        self.eval_window: deque[tuple[float, int]] = deque(maxlen=ACCURACY_WINDOW_SIZE)
+        # Rolling (predicted probability, actual 0/1, target was idle) of verified
+        # predictions. "Idle" = the target had been quiet for a while when the
+        # prediction was made, i.e. the case pre-heating is actually about.
+        self.eval_window: deque[tuple[float, int, bool]] = deque(maxlen=ACCURACY_WINDOW_SIZE)
         self.warmstart_done = False
         self.pending_samples: dict[str, dict] = {}
         self.last_backtest: dict[str, Any] | None = None
@@ -137,6 +143,10 @@ class EntityFutureCoordinator:
         return int(self.entry.options.get(CONF_TARGET_HOLD_MINUTES, DEFAULT_TARGET_HOLD_MINUTES))
 
     @property
+    def time_mode(self) -> str:
+        return self.entry.options.get(CONF_TIME_MODE, DEFAULT_TIME_MODE)
+
+    @property
     def hold(self) -> timedelta:
         return timedelta(minutes=self.hold_minutes)
 
@@ -149,7 +159,7 @@ class EntityFutureCoordinator:
         """
         return (
             f"{self.label_mode}|hold={self.hold_minutes}"
-            f"|target={int(self.include_target_state_feature)}"
+            f"|target={int(self.include_target_state_feature)}|time={self.time_mode}"
         )
 
     # -- lifecycle ---------------------------------------------------------
@@ -233,7 +243,10 @@ class EntityFutureCoordinator:
 
         self.model = NaiveBayesModel.from_dict(data.get("model", {}))
         self.eval_window = deque(
-            ((float(p), int(y)) for p, y in data.get("eval_window", [])),
+            (
+                (float(item[0]), int(item[1]), bool(item[2]) if len(item) > 2 else False)
+                for item in data.get("eval_window", [])
+            ),
             maxlen=ACCURACY_WINDOW_SIZE,
         )
         self.warmstart_done = bool(data.get("warmstart_done", False))
@@ -269,7 +282,9 @@ class EntityFutureCoordinator:
         return {
             "model_signature": self.model_signature,
             "model": self.model.to_dict(),
-            "eval_window": [[probability, outcome] for probability, outcome in self.eval_window],
+            "eval_window": [
+                [probability, outcome, idle] for probability, outcome, idle in self.eval_window
+            ],
             "warmstart_done": self.warmstart_done,
             "pending_samples": list(self.pending_samples.values()),
         }
@@ -327,6 +342,7 @@ class EntityFutureCoordinator:
                 else list(overrides["helper_entities"])
             ),
             threshold_pct=int(threshold) if threshold else self.prediction_threshold,
+            time_mode=overrides.get("time_mode") or self.time_mode,
         )
         self.last_backtest = result
         _LOGGER.info("EntityFuture %s: backtest result: %s", self.entry.title, result)
@@ -354,7 +370,9 @@ class EntityFutureCoordinator:
             entity_id: feature_pair(self.hass.states.get(entity_id), now_utc, window)
             for entity_id in self.helper_entities
         }
-        return make_features(dt_util.as_local(now_utc), target_pair, helper_pairs)
+        return make_features(
+            dt_util.as_local(now_utc), target_pair, helper_pairs, self.time_mode
+        )
 
     # -- prediction / quality exposed to entities ----------------------------
 
@@ -365,7 +383,19 @@ class EntityFutureCoordinator:
         """Quality of the verified predictions so far, at the configured threshold."""
         if len(self.eval_window) < MIN_SAMPLES_FOR_ACCURACY:
             return None
-        return summarize(list(self.eval_window), self.prediction_threshold / 100)
+        pairs = [(probability, outcome) for probability, outcome, _ in self.eval_window]
+        return summarize(pairs, self.prediction_threshold / 100)
+
+    def current_idle_metrics(self) -> dict[str, Any] | None:
+        """Quality for predictions made while the target had been quiet for a while.
+
+        A "yes" outcome there means a *new* session started within the horizon,
+        so continuing activity can't inflate the numbers.
+        """
+        pairs = [(p, outcome) for p, outcome, idle in self.eval_window if idle]
+        if len(pairs) < MIN_SAMPLES_FOR_IDLE_AUC:
+            return None
+        return summarize(pairs, self.prediction_threshold / 100)
 
     @property
     def verified_count(self) -> int:
@@ -399,6 +429,13 @@ class EntityFutureCoordinator:
             "window_end": window_end.isoformat(),
             "features": features,
             "predicted_prob": predicted,
+            "idle": is_idle_now(
+                self.hass.states.get(self.target_entity),
+                now_utc,
+                self.target_state,
+                self.hold,
+                timedelta(minutes=SESSION_GAP_MINUTES),
+            ),
         }
         self._schedule_verification(sample_id, window_end)
         self._async_persist()
@@ -456,7 +493,7 @@ class EntityFutureCoordinator:
 
         predicted_prob = sample.get("predicted_prob")
         if predicted_prob is not None:
-            self.eval_window.append((float(predicted_prob), label))
+            self.eval_window.append((float(predicted_prob), label, bool(sample.get("idle", False))))
 
         self.model.learn_one(sample["features"], label)
         self._async_persist()

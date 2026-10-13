@@ -4,11 +4,15 @@ from datetime import datetime, timedelta, timezone
 
 from ef.features import (
     any_state_active_in_window,
+    day_type,
     feature_pair,
     find_session_starts,
+    is_idle,
+    is_idle_now,
     label_window,
     make_features,
     state_object_at,
+    time_features,
 )
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -103,3 +107,43 @@ def test_find_session_starts_with_hold_merges_nearby_pulses() -> None:
     assert find_session_starts(states, "on", timedelta(0), timedelta(minutes=20)) == [_min(10), _min(40)]
     # With a 25 minute hold the first pulse still "counts" at minute 40.
     assert find_session_starts(states, "on", timedelta(minutes=25), timedelta(minutes=20)) == [_min(10)]
+
+
+def test_time_modes() -> None:
+    monday_0710 = datetime(2026, 1, 5, 7, 10)
+    saturday_0710 = datetime(2026, 1, 10, 7, 10)
+
+    assert time_features(monday_0710) == {"_weekday": "0", "_time_bucket": "14"}
+    assert time_features(monday_0710, "time_only") == {"_time_bucket": "14"}
+    assert time_features(monday_0710, "daytype") == {"_daytype_time": "workday_14"}
+    assert time_features(saturday_0710, "daytype") == {"_daytype_time": "weekend_14"}
+    assert time_features(monday_0710, "daytype_and_time") == {
+        "_daytype_time": "workday_14",
+        "_time_bucket": "14",
+    }
+    # Tuesday and Monday are the same day type, so they share one joint feature value.
+    tuesday = datetime(2026, 1, 6, 7, 10)
+    assert time_features(tuesday, "daytype") == time_features(monday_0710, "daytype")
+    assert day_type(datetime(2026, 1, 11)) == "weekend"
+
+
+def test_is_idle_needs_a_quiet_gap_before() -> None:
+    gap = timedelta(minutes=30)
+    states = _states(("off", 0), ("on", 10), ("off", 11))
+    assert is_idle(states, _min(60), "on", timedelta(0), gap) is True
+    assert is_idle(states, _min(30), "on", timedelta(0), gap) is False  # on at 10..11, within 30 min
+    assert is_idle(states, _min(5), "on", timedelta(0), gap) is True
+    assert is_idle(states, _min(10), "on", timedelta(0), gap) is False  # active right now
+    # A hold extends the activity, so the room stays "not idle" for longer.
+    assert is_idle(states, _min(50), "on", timedelta(minutes=15), gap) is False
+
+
+def test_is_idle_now_uses_the_current_state_object() -> None:
+    gap, hold = timedelta(minutes=30), timedelta(minutes=5)
+    now = _min(100)
+    assert is_idle_now(FakeState("off", _min(40)), now, "on", hold, gap) is True  # 60 min quiet
+    assert is_idle_now(FakeState("off", _min(80)), now, "on", hold, gap) is False  # only 20 min quiet
+    assert is_idle_now(FakeState("off", _min(66)), now, "on", hold, gap) is False  # 34 < 30 + 5
+    assert is_idle_now(FakeState("on", _min(0)), now, "on", hold, gap) is False  # active now
+    assert is_idle_now(FakeState("unavailable", _min(0)), now, "on", hold, gap) is False
+    assert is_idle_now(None, now, "on", hold, gap) is False

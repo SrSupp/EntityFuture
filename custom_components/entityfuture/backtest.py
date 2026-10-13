@@ -14,10 +14,16 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from .const import BACKTEST_THRESHOLDS
+from .const import (
+    BACKTEST_THRESHOLDS,
+    DEFAULT_TIME_MODE,
+    MIN_SAMPLES_FOR_IDLE_AUC,
+    SESSION_GAP_MINUTES,
+)
 from .features import (
     any_state_active_in_window,
     feature_pair,
+    is_idle,
     label_window,
     make_features,
     state_object_at,
@@ -34,6 +40,7 @@ class Sample:
     time_features: dict[str, str]
     label: int
     currently_active: int
+    idle: int
 
 
 @dataclass(frozen=True)
@@ -42,6 +49,7 @@ class EvalRow:
     p_full: float
     p_time_only: float
     currently_active: int
+    idle: int
     label: int
 
 
@@ -58,10 +66,12 @@ def build_samples(
     start: datetime,
     end: datetime,
     to_local: Callable[[datetime], datetime],
+    time_mode: str = DEFAULT_TIME_MODE,
 ) -> list[Sample]:
     """Reconstruct one (features, label) sample per sampling interval."""
     window_start, window_end = label_window(label_mode, horizon, sampling_interval)
     one_second = timedelta(seconds=1)
+    idle_gap = timedelta(minutes=SESSION_GAP_MINUTES)
     samples: list[Sample] = []
 
     current = start
@@ -85,10 +95,11 @@ def build_samples(
         samples.append(
             Sample(
                 t=current,
-                features=make_features(local_now, target_pair, helper_pairs),
-                time_features=time_features(local_now),
+                features=make_features(local_now, target_pair, helper_pairs, time_mode),
+                time_features=time_features(local_now, time_mode),
                 label=int(label),
                 currently_active=int(currently_active),
+                idle=int(is_idle(target_states, current, target_state, hold, idle_gap)),
             )
         )
         current += sampling_interval
@@ -119,6 +130,7 @@ def walk_forward(
                         p_full=p_full,
                         p_time_only=p_time,
                         currently_active=sample.currently_active,
+                        idle=sample.idle,
                         label=sample.label,
                     )
                 )
@@ -148,6 +160,49 @@ def _sessions_caught(
         ):
             caught += 1
     return caught
+
+
+def _idle_section(rows: list[EvalRow]) -> dict[str, Any]:
+    """Quality only for moments when the target had been quiet for a while.
+
+    This is the case pre-heating is actually about: the room is idle now - will
+    it be used soon? A "yes" window then means a *new* session starts, so
+    continuing activity can't inflate the numbers.
+    """
+    idle_rows = [row for row in rows if row.idle]
+    if len(idle_rows) < MIN_SAMPLES_FOR_IDLE_AUC:
+        return {"samples": len(idle_rows), "note": "too few idle moments to evaluate"}
+
+    full_pairs = [(row.p_full, row.label) for row in idle_rows]
+    time_pairs = [(row.p_time_only, row.label) for row in idle_rows]
+    base = summarize(full_pairs, 0.5)
+
+    table = []
+    for percent in BACKTEST_THRESHOLDS:
+        at = summarize(full_pairs, percent / 100)
+        table.append(
+            {
+                "threshold_pct": percent,
+                "flagged_rate": _round(at["flagged_rate"]),
+                "precision": _round(at["precision"]),
+                "recall": _round(at["recall"]),
+                "lift": _round(at["lift"], 2),
+            }
+        )
+    return {
+        "samples": len(idle_rows),
+        "share_of_all_samples": _round(len(idle_rows) / len(rows)),
+        "session_start_rate": _round(base["positive_rate"]),
+        "roc_auc": {
+            "model": _round(base["roc_auc"]),
+            "time_of_day_only": _round(roc_auc(time_pairs)),
+        },
+        "brier_skill_score": {
+            "model": _round(base["brier_skill_score"]),
+            "time_of_day_only": _round(brier_skill_score(time_pairs)),
+        },
+        "by_threshold": table,
+    }
 
 
 def evaluate(
@@ -201,6 +256,7 @@ def evaluate(
             "model": _round(summary["brier_skill_score"]),
             "time_of_day_only": _round(brier_skill_score(time_pairs)),
         },
+        "room_idle": _idle_section(rows),
         "session_starts_in_period": session_count,
         "lead_window_minutes": [
             int(sampling_interval.total_seconds() // 60),

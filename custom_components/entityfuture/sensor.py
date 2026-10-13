@@ -28,6 +28,7 @@ async def async_setup_entry(
             EntityFutureProbabilitySensor(coordinator),
             EntityFutureAccuracySensor(coordinator),
             EntityFutureAucSensor(coordinator),
+            EntityFutureIdleAucSensor(coordinator),
         ]
     )
 
@@ -145,4 +146,48 @@ class EntityFutureAucSensor(EntityFutureEntity, SensorEntity):
             attributes["lift"] = _rounded(metrics["lift"], 2)
         if self.coordinator.last_backtest is not None:
             attributes["last_backtest"] = self.coordinator.last_backtest
+        return attributes
+
+
+class EntityFutureIdleAucSensor(EntityFutureEntity, SensorEntity):
+    """Discrimination (ROC AUC) counting only predictions made while the target was quiet.
+
+    This is the number that matters for anticipation, e.g. pre-heating: the
+    room has been idle for a while - does the probability rise *before* it
+    is used again? Continuing activity can't flatter it, because the outcome
+    in that case is always a brand new session starting.
+    """
+
+    _attr_translation_key = "auc_idle"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:timer-sand"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, coordinator: EntityFutureCoordinator) -> None:
+        super().__init__(coordinator, "auc_idle")
+
+    @property
+    def native_value(self) -> float | None:
+        metrics = self.coordinator.current_idle_metrics()
+        if metrics is None or metrics["roc_auc"] is None:
+            return None
+        return round(metrics["roc_auc"], 2)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        attributes: dict[str, Any] = {}
+        metrics = self.coordinator.current_idle_metrics()
+        if metrics is not None:
+            attributes.update(
+                {
+                    "idle_predictions": metrics["n"],
+                    "session_start_rate": _rounded(metrics["positive_rate"]),
+                    "precision": _rounded(metrics["precision"]),
+                    "recall": _rounded(metrics["recall"]),
+                    "flagged_rate": _rounded(metrics["flagged_rate"]),
+                    "lift": _rounded(metrics["lift"], 2),
+                    "brier_skill_score": _rounded(metrics["brier_skill_score"]),
+                }
+            )
         return attributes

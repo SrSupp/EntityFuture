@@ -149,6 +149,7 @@ async def async_import_history(
             start=start_time,
             end=end_time,
             to_local=dt_util.as_local,
+            time_mode=coordinator.time_mode,
         )
         total = len(samples)
         if total == 0:
@@ -165,7 +166,7 @@ async def async_import_history(
         for sample in samples[train_only_count:]:
             predicted = coordinator.model.predict_proba(sample.features)
             if predicted is not None:
-                coordinator.eval_window.append((predicted, sample.label))
+                coordinator.eval_window.append((predicted, sample.label, bool(sample.idle)))
             coordinator.model.learn_one(sample.features, sample.label)
 
         return total, eval_count
@@ -183,6 +184,7 @@ async def async_run_backtest(
     include_target: bool,
     helper_entities: list[str],
     threshold_pct: int,
+    time_mode: str,
 ) -> dict[str, Any]:
     """Replay up to `days` of history and report how good the predictions would have been.
 
@@ -203,6 +205,7 @@ async def async_run_backtest(
         "include_target_state_feature": include_target,
         "helper_entities": helper_entities,
         "threshold_pct": threshold_pct,
+        "time_mode": time_mode,
         "horizon_minutes": int(horizon.total_seconds() // 60),
         "sampling_interval_minutes": int(sampling_interval.total_seconds() // 60),
     }
@@ -231,6 +234,7 @@ async def async_run_backtest(
             start=start_time,
             end=end_time,
             to_local=dt_util.as_local,
+            time_mode=time_mode,
         )
         if len(samples) < MIN_SAMPLES_FOR_BACKTEST:
             return {

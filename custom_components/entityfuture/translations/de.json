@@ -37,12 +37,14 @@
           "use_recorder_history": "Recorder-Historie als Warmstart nutzen",
           "include_target_state_feature": "Aktuellen Zustand der Ziel-Entität als Merkmal einbeziehen",
           "label_mode": "Was gilt als \"Ja\"",
-          "target_hold_minutes": "Haltezeit (Minuten)"
+          "target_hold_minutes": "Haltezeit (Minuten)",
+          "time_mode": "Zeit-Modell"
         },
         "data_description": {
           "label_mode": "\"Innerhalb des Horizonts\": Ja, wenn der Zielzustand irgendwann in den nächsten X Minuten auftritt - meist die richtige Frage z. B. fürs Vorheizen. \"Genau zum Horizont\": Ja nur, wenn er im kurzen Fenster in X Minuten auftritt. Eine Änderung baut das Modell neu auf.",
           "target_hold_minutes": "Die Ziel-Entität gilt so lange nach ihrem letzten aktiven Moment als aktiv, damit kurze Sensor-Impulse (z. B. ein PIR mit einer Minute Nachlauf) zu einer Sitzung verschmelzen. 0 = aus. Eine Änderung baut das Modell neu auf.",
-          "include_target_state_feature": "Für einen vorausschauenden Prädiktor (z. B. \"gleich Bewegung im Bad\" anhand eines Rolladens im Schlafzimmer) diese Option AUSSCHALTEN - der aktuelle Zustand der Ziel-Entität selbst ist meist so ein starker Prädiktor, dass er schwächere, aber früher auftretende Signale deiner Hilfs-Entitäten überdeckt. Für einen \"bleibt das so\"-Prädiktor (z. B. ein Schalter bleibt an) ANGESCHALTET lassen."
+          "include_target_state_feature": "Für einen vorausschauenden Prädiktor (z. B. \"gleich Bewegung im Bad\" anhand eines Rolladens im Schlafzimmer) diese Option AUSSCHALTEN - der aktuelle Zustand der Ziel-Entität selbst ist meist so ein starker Prädiktor, dass er schwächere, aber früher auftretende Signale deiner Hilfs-Entitäten überdeckt. Für einen \"bleibt das so\"-Prädiktor (z. B. ein Schalter bleibt an) ANGESCHALTET lassen.",
+          "time_mode": "Wie die Uhrzeit ins Modell eingeht. Bei nur ein bis zwei Wochen Historie lernt \"Werktag/Wochenende\" eine Routine deutlich schneller als sieben einzelne Wochentage, weil jeder Wochentag so wenige Beispiele hat. Eine Änderung baut das Modell neu auf."
         }
       }
     },
@@ -56,16 +58,35 @@
         "within": "Innerhalb des Horizonts (irgendwann in den nächsten X Minuten)",
         "exact": "Genau zum Horizont (kurzes Fenster in X Minuten)"
       }
+    },
+    "time_mode": {
+      "options": {
+        "weekday": "Wochentag + Uhrzeit (getrennt)",
+        "daytype": "Werktag/Wochenende x Uhrzeit (gemeinsam)",
+        "daytype_and_time": "Werktag/Wochenende x Uhrzeit, plus Uhrzeit",
+        "time_only": "Nur Uhrzeit"
+      }
     }
   },
   "entity": {
     "sensor": {
-      "probability": { "name": "Wahrscheinlichkeit" },
-      "accuracy": { "name": "Genauigkeit" },
-      "auc": { "name": "Trennschärfe (AUC)" }
+      "probability": {
+        "name": "Wahrscheinlichkeit"
+      },
+      "accuracy": {
+        "name": "Genauigkeit"
+      },
+      "auc": {
+        "name": "Trennschärfe (AUC)"
+      },
+      "auc_idle": {
+        "name": "Trennschärfe bei ruhigem Raum (AUC)"
+      }
     },
     "binary_sensor": {
-      "prediction": { "name": "Vorhersage" }
+      "prediction": {
+        "name": "Vorhersage"
+      }
     }
   }
 }

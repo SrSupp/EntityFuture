@@ -15,6 +15,7 @@ from .const import (
     CONF_HELPER_ENTITIES,
     CONF_INCLUDE_TARGET_STATE_FEATURE,
     CONF_LABEL_MODE,
+    CONF_TIME_MODE,
     DOMAIN,
     LABEL_MODE_EXACT,
     LABEL_MODE_WITHIN,
@@ -22,6 +23,7 @@ from .const import (
     PLATFORMS,
     SERVICE_BACKTEST,
     SERVICE_RESET_MODEL,
+    TIME_MODES,
 )
 from .coordinator import EntityFutureCoordinator
 
@@ -43,6 +45,7 @@ BACKTEST_SCHEMA = vol.Schema(
             vol.Coerce(int), vol.Range(min=0, max=MAX_TARGET_HOLD_MINUTES)
         ),
         vol.Optional(CONF_INCLUDE_TARGET_STATE_FEATURE): cv.boolean,
+        vol.Optional(CONF_TIME_MODE): vol.In(list(TIME_MODES)),
         vol.Optional(CONF_HELPER_ENTITIES): cv.entity_ids,
         vol.Optional("threshold"): vol.All(vol.Coerce(int), vol.Range(min=1, max=99)),
     }
@@ -102,6 +105,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
             include_target_state_feature=call.data.get(CONF_INCLUDE_TARGET_STATE_FEATURE),
             helper_entities=call.data.get(CONF_HELPER_ENTITIES),
             threshold=call.data.get("threshold"),
+            time_mode=call.data.get(CONF_TIME_MODE),
         )
 
     hass.services.async_register(

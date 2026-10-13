@@ -113,3 +113,45 @@ def test_session_catch_counts_early_flags() -> None:
     # Probabilities stay modest on a short history (the weekday feature splits
     # a 10-day history into thin slices), so check a low threshold.
     assert by_threshold[5]["sessions_caught"] == len(sessions)
+
+
+def test_idle_section_only_looks_at_quiet_moments() -> None:
+    target, _ = _daily_routine(days=10)
+    samples = _samples(target, {})
+    rows = walk_forward(samples, alpha=1.0, burn_in_fraction=0.3)
+    result = evaluate(rows, threshold=0.3, sessions=[], horizon=HORIZON, sampling_interval=SAMPLING)
+
+    idle = result["room_idle"]
+    assert idle["samples"] > 0.9 * len(rows)  # the routine is a single 5 minute event per day
+    # Only quiet moments are scored, so "just current activity" can't help here,
+    # but the time-of-day signal still has to show up as a real, honest AUC.
+    assert idle["roc_auc"]["model"] > 0.8
+    assert {row["threshold_pct"] for row in idle["by_threshold"]} >= {10, 20, 50}
+
+
+def test_idle_section_reports_too_few_samples() -> None:
+    result = evaluate([], threshold=0.3, sessions=[], horizon=HORIZON, sampling_interval=SAMPLING)
+    assert result["room_idle"]["samples"] == 0
+    assert "note" in result["room_idle"]
+
+
+def test_time_mode_changes_the_features_built_for_a_sample() -> None:
+    target, _ = _daily_routine(days=2)
+    base = dict(
+        target_states=target,
+        helper_states={},
+        target_state="on",
+        horizon=HORIZON,
+        sampling_interval=SAMPLING,
+        label_mode="within",
+        hold=timedelta(0),
+        include_target=False,
+        start=DAY0,
+        end=DAY0 + timedelta(days=2),
+        to_local=lambda value: value,
+    )
+    weekday = build_samples(**base)[0]
+    daytype = build_samples(**base, time_mode="daytype")[0]
+    assert "_weekday" in weekday.features
+    assert "_weekday" not in daytype.features
+    assert daytype.features["_daytype_time"].startswith("workday_")

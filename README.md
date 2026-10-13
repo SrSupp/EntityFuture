@@ -24,6 +24,7 @@ This creates a device with these entities:
 | `binary_sensor.<name>_prediction` | Yes/no, based on a configurable threshold (default 50%) |
 | `sensor.<name>_accuracy` | Rolling accuracy at your threshold. Attributes show `baseline_accuracy` — what a predictor that *always* says the more common answer would score — plus precision, recall and the share of time it says "yes". **Compare accuracy to the baseline, not to 100%.** |
 | `sensor.<name>_auc` | Discrimination (ROC AUC) of the verified predictions. 0.5 = coin flip, 1.0 = perfect. Unlike accuracy it isn't inflated by a rare "yes". |
+| `sensor.<name>_auc_idle` | The same, but counting only predictions made while the target had been quiet for 30+ minutes. That is the case anticipation (e.g. pre-heating) is about: the room is idle now — does the probability rise *before* it is used again? Continuing activity can't flatter this number. |
 
 ## What counts as "yes"? (Options → "What counts as yes")
 
@@ -33,6 +34,17 @@ This creates a device with these entities:
 **Hold time** treats the target as still active for N minutes after its last active moment, so short sensor pulses (a PIR that reports "on" for ~1 minute) merge into one session instead of looking like unrelated blips.
 
 Changing either rebuilds the model (the learned counts would otherwise answer a different question), then re-runs the recorder warm start.
+
+## Time model (Options → "Time model")
+
+How the clock enters the model:
+
+- **Weekday + time of day (separate)** *(default)*: seven weekdays and 48 half-hour buckets as two independent features.
+- **Workday/weekend × time of day (joint)**: one feature, e.g. `workday_14` (Mon–Fri, 07:00–07:30). Each value gets far more examples, so a routine is learned much faster on a short history.
+- **Workday/weekend × time of day, plus time of day**: the joint feature plus the plain time-of-day bucket as a fallback.
+- **Time of day only**.
+
+Not sure which fits your household? Don't guess — compare them with the backtest (`time_mode`). Changing the option rebuilds the model.
 
 ## How does the model work?
 
@@ -54,9 +66,10 @@ Don't wait days to find out. The `entityfuture.backtest` service replays your re
 
 - ROC AUC of your setup, of a **time-of-day-only** model (what do the helpers actually add?), and of "just use whether it is active right now"
 - the positive rate and the **always-"no" baseline accuracy**
+- a **"room idle" block**: the same quality numbers counting only moments when the target had been quiet for 30+ minutes — i.e. whether the probability rises *before* a new session starts
 - a **by-threshold table**: share of time the predictor would say "yes" (≈ how long a heater would run), precision, recall, lift, and how many **session starts were flagged early enough** (at least one sampling interval, up to the horizon, ahead)
 
-Every setting can be overridden per run (label mode, hold time, helper entities, include-target-state, threshold, days), so you can compare candidate leading signals without touching the live predictor. The result is returned as the service response (Developer Tools → Actions shows it), written to the log, and shown on the AUC sensor's `last_backtest` attribute.
+Every setting can be overridden per run (label mode, hold time, time model, helper entities, include-target-state, threshold, days), so you can compare candidate leading signals without touching the live predictor. The result is returned as the service response (Developer Tools → Actions shows it), written to the log, and shown on the AUC sensor's `last_backtest` attribute.
 
 ## Installation
 
@@ -86,7 +99,7 @@ Copy `custom_components/entityfuture` into your `config/custom_components/` dire
 
 - Only discrete states as a target (no "temperature > 22°C" threshold on numeric sensors)
 - One predictor = one target entity + one horizon; create multiple predictors for multiple horizons
-- Weekday and time of day are separate features. With only a week or two of history each weekday has very few examples, which can hold probabilities down even for very regular routines.
+- With the default time model, weekday and time of day are separate features: with only a week or two of history each weekday has very few examples, which can hold probabilities down even for very regular routines. Try a workday/weekend time model (see above).
 - Naive Bayes assumes features are conditionally independent — tightly correlated features (e.g. a helper's state and its "recency") are partly double-counted, so probabilities tend to be overconfident. Use the backtest's precision/lift rather than the raw percentage.
 - A prediction can only be as good as its signals. If nothing in your house reliably happens a while *before* the target, no model can foresee it 15 minutes ahead — the backtest will tell you.
 

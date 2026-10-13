@@ -76,6 +76,21 @@ backtest:
       required: false
       selector:
         boolean:
+    time_mode:
+      name: Time model
+      description: >-
+        How the clock enters the model. "weekday": day of week and time of
+        day as separate features. "daytype": workday/weekend x time of day
+        as one joint feature. "daytype_and_time": that joint feature plus the
+        plain time of day. "time_only": time of day only.
+      required: false
+      selector:
+        select:
+          options:
+            - weekday
+            - daytype
+            - daytype_and_time
+            - time_only
     helper_entities:
       name: Helper entities
       description: Replace the helper entities for this run, to test other candidate signals.
